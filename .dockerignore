@@ -1,0 +1,84 @@
+# Docker ignore file for go-chess
+
+# Git files
+.git
+.gitignore
+
+# Documentation
+README.md
+CONTRIBUTING.md
+CHANGELOG.md
+LICENSE.md
+SECURITY.md
+CODE_OF_CONDUCT.md
+
+# Documentation folders
+docs/
+wiki/
+
+# Coverage files
+coverage.out
+coverage.html
+*.prof
+
+# Test files
+*_test.go
+
+# Build artifacts
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files
+*.log
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+
+# Docker files (except main ones)
+Dockerfile.dev
+docker-compose.dev.yml
+docker-compose.override.yml
+
+# Scripts (development only)
+scripts/dev-setup.sh
+scripts/local-test.sh
+
+# Examples binaries
+examples/*/examples
+examples/cli/chess-cli
+examples/api-server/api-server
+examples/*/examples.exe
+
+# Vendor directory
+vendor/

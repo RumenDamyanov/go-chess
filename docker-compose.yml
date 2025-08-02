@@ -1,0 +1,29 @@
+services:
+  chess-server:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - CHESS_HOST=0.0.0.0
+      - CHESS_PORT=8080
+      - CHESS_CORS_ENABLED=true
+      - CHESS_ALLOWED_ORIGINS=*
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Optional: Add chess-cli service
+  chess-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./games:/app/games
+    profiles:
+      - cli  # Only start with docker-compose --profile cli up
