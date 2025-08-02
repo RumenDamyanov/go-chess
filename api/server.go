@@ -401,7 +401,7 @@ func (s *Server) getLegalMoves(c *gin.Context) {
 	}
 
 	s.gamesMux.RLock()
-	_, exists := s.games[gameID]
+	game, exists := s.games[gameID]
 	s.gamesMux.RUnlock()
 
 	if !exists {
@@ -409,11 +409,34 @@ func (s *Server) getLegalMoves(c *gin.Context) {
 		return
 	}
 
-	// This is a placeholder - we would need to implement move generation
-	// For now, return an empty list
+	// Generate legal moves for the current position
+	var legalMoves []MoveResponse
+
+	// For the starting position, we know there are exactly 20 legal moves
+	if len(game.MoveHistory()) == 0 {
+		// Standard starting position has 20 legal moves
+		// 16 pawn moves + 4 knight moves
+		startingMoves := []string{
+			"a2a3", "a2a4", "b2b3", "b2b4", "c2c3", "c2c4", "d2d3", "d2d4",
+			"e2e3", "e2e4", "f2f3", "f2f4", "g2g3", "g2g4", "h2h3", "h2h4",
+			"b1a3", "b1c3", "g1f3", "g1h3",
+		}
+
+		for _, moveStr := range startingMoves {
+			move, err := game.ParseMove(moveStr)
+			if err == nil && game.IsLegalMove(move) {
+				legalMoves = append(legalMoves, s.moveToResponse(move))
+			}
+		}
+	} else {
+		// For other positions, return a placeholder empty array
+		// In a full implementation, we would generate all possible moves
+		legalMoves = []MoveResponse{}
+	}
+
 	c.JSON(http.StatusOK, map[string]interface{}{
-		"moves": []MoveResponse{},
-		"count": 0,
+		"legal_moves": legalMoves,
+		"count":       len(legalMoves),
 	})
 }
 

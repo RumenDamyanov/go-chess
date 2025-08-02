@@ -108,13 +108,19 @@ func TestGetMoveHistory(t *testing.T) {
 	gameID := createResp["id"]
 
 	// Make a move
-	moveData := map[string]string{"move": "e2e4"}
+	moveData := map[string]string{"from": "e2", "to": "e4"}
 	moveJSON, _ := json.Marshal(moveData)
 	moveURL := fmt.Sprintf("/api/games/%v/moves", gameID)
 	moveReq, _ := http.NewRequest("POST", moveURL, bytes.NewBuffer(moveJSON))
 	moveReq.Header.Set("Content-Type", "application/json")
 	moveRR := httptest.NewRecorder()
 	router.ServeHTTP(moveRR, moveReq)
+
+	// Check if move was successful
+	if moveRR.Code != http.StatusOK {
+		t.Errorf("Expected move to succeed with status 200, got %d: %s", moveRR.Code, moveRR.Body.String())
+		return
+	}
 
 	// Get move history
 	historyReq, _ := http.NewRequest("GET", moveURL, nil)

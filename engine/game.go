@@ -451,6 +451,10 @@ func (g *Game) isPawnMoveLegal(move Move) bool {
 		if !target.IsEmpty() && target.Color != move.Piece.Color {
 			return true
 		}
+		// En passant capture
+		if move.Type == EnPassant && move.To == g.enPassantSquare {
+			return true
+		}
 	}
 
 	return false
@@ -484,7 +488,19 @@ func (g *Game) isKingMoveLegal(move Move) bool {
 
 	fileDiff := abs(move.To.File() - move.From.File())
 	rankDiff := abs(move.To.Rank() - move.From.Rank())
-	return fileDiff <= 1 && rankDiff <= 1
+
+	// King can only move one square in any direction
+	if fileDiff > 1 || rankDiff > 1 {
+		return false
+	}
+
+	// Check if destination is empty or contains opponent piece
+	target := g.board.GetPiece(move.To)
+	if !target.IsEmpty() && target.Color == move.Piece.Color {
+		return false
+	}
+
+	return true
 }
 
 // isPathClear checks if the path between two squares is clear.
