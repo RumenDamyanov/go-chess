@@ -47,6 +47,7 @@ type MoveRequest struct {
 	From      string `json:"from"`
 	To        string `json:"to"`
 	Promotion string `json:"promotion,omitempty"`
+	Notation  string `json:"notation,omitempty"`
 }
 
 // AIRequest represents an AI move request.
@@ -247,9 +248,16 @@ func (s *Server) makeMove(c *gin.Context) {
 	}
 
 	// Parse the move
-	notation := req.From + req.To
-	if req.Promotion != "" {
-		notation += req.Promotion
+	var notation string
+	if req.Notation != "" {
+		// Use provided notation (for castling moves like "O-O")
+		notation = req.Notation
+	} else {
+		// Construct notation from from/to coordinates
+		notation = req.From + req.To
+		if req.Promotion != "" {
+			notation += req.Promotion
+		}
 	}
 
 	move, err := game.ParseMove(notation)
@@ -409,35 +417,24 @@ func (s *Server) getLegalMoves(c *gin.Context) {
 		return
 	}
 
-	// Generate legal moves for the current position
-	var legalMoves []MoveResponse
+	// Generate all legal moves for the current position
+	legalMoves := s.generateAllLegalMoves(game)
 
-	// For the starting position, we know there are exactly 20 legal moves
-	if len(game.MoveHistory()) == 0 {
-		// Standard starting position has 20 legal moves
-		// 16 pawn moves + 4 knight moves
-		startingMoves := []string{
-			"a2a3", "a2a4", "b2b3", "b2b4", "c2c3", "c2c4", "d2d3", "d2d4",
-			"e2e3", "e2e4", "f2f3", "f2f4", "g2g3", "g2g4", "h2h3", "h2h4",
-			"b1a3", "b1c3", "g1f3", "g1h3",
-		}
-
-		for _, moveStr := range startingMoves {
-			move, err := game.ParseMove(moveStr)
-			if err == nil && game.IsLegalMove(move) {
-				legalMoves = append(legalMoves, s.moveToResponse(move))
-			}
-		}
-	} else {
-		// For other positions, return a placeholder empty array
-		// In a full implementation, we would generate all possible moves
-		legalMoves = []MoveResponse{}
+	var moveResponses []MoveResponse
+	for _, move := range legalMoves {
+		moveResponses = append(moveResponses, s.moveToResponse(move))
 	}
 
 	c.JSON(http.StatusOK, map[string]interface{}{
-		"legal_moves": legalMoves,
-		"count":       len(legalMoves),
+		"legal_moves": moveResponses,
+		"count":       len(moveResponses),
 	})
+}
+
+// generateAllLegalMoves generates all legal moves for the current position.
+// This uses the engine's optimized move generation logic.
+func (s *Server) generateAllLegalMoves(game *engine.Game) []engine.Move {
+	return game.GetAllLegalMoves()
 }
 
 // loadFromFEN loads a game position from FEN notation.

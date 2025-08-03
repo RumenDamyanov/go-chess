@@ -83,6 +83,8 @@ type GameStatus int
 const (
 	// InProgress indicates the game is still in progress.
 	InProgress GameStatus = iota
+	// Check indicates the current player's king is in check.
+	Check
 	// WhiteWins indicates white has won the game.
 	WhiteWins
 	// BlackWins indicates black has won the game.
@@ -96,6 +98,8 @@ func (gs GameStatus) String() string {
 	switch gs {
 	case InProgress:
 		return "in_progress"
+	case Check:
+		return "check"
 	case WhiteWins:
 		return "white_wins"
 	case BlackWins:
@@ -284,6 +288,12 @@ func (g *Game) IsLegalMove(move Move) bool {
 		return false
 	}
 
+	// Check if the destination contains a king - capturing the king should never be allowed
+	targetPiece := g.board.GetPiece(move.To)
+	if !targetPiece.IsEmpty() && targetPiece.Type == King {
+		return false // Cannot capture the king
+	}
+
 	// Check if the move is pseudo-legal for the piece type
 	if !g.isPseudoLegalMove(move) {
 		return false
@@ -291,10 +301,12 @@ func (g *Game) IsLegalMove(move Move) bool {
 
 	// Make a copy of the game to test the move
 	gameCopy := g.copy()
-	gameCopy.makeMove(move)
+	gameCopy.makeMoveWithoutStatusUpdate(move)
 
 	// Check if the king is in check after the move
-	return !gameCopy.isInCheck(g.activeColor)
+	inCheck := gameCopy.isInCheck(g.activeColor)
+
+	return !inCheck
 }
 
 // MakeMove makes a move if it's legal.
@@ -318,6 +330,47 @@ func (g *Game) MakeMove(move Move) error {
 	g.updateGameStatus()
 
 	return nil
+}
+
+// makeMoveWithoutStatusUpdate executes a move without validation or status update.
+// This is used internally for move validation to avoid infinite recursion.
+func (g *Game) makeMoveWithoutStatusUpdate(move Move) {
+	// Handle castling
+	if move.Type == Castling {
+		g.executeCastling(move)
+		return
+	}
+
+	// Handle en passant
+	if move.Type == EnPassant {
+		g.executeEnPassant(move)
+		return
+	}
+
+	// Regular move
+	g.board.SetPiece(move.To, move.Piece)
+	g.board.SetPiece(move.From, Piece{Type: Empty})
+
+	// Handle promotion
+	if move.Type == Promotion {
+		g.board.SetPiece(move.To, Piece{Type: move.Promotion, Color: move.Piece.Color})
+	}
+
+	// Update castling rights
+	g.updateCastlingRights(move)
+
+	// Update en passant square
+	g.updateEnPassantSquare(move)
+
+	// Update half-move clock
+	g.updateHalfMoveClock(move)
+
+	// Switch active color for the copy
+	if g.activeColor == White {
+		g.activeColor = Black
+	} else {
+		g.activeColor = White
+	}
 }
 
 // makeMove executes a move without validation.
@@ -402,17 +455,23 @@ func (g *Game) isPseudoLegalMove(move Move) bool {
 
 	switch piece.Type {
 	case Pawn:
-		return g.isPawnMoveLegal(move)
+		result := g.isPawnMoveLegal(move)
+		return result
 	case Rook:
-		return g.isRookMoveLegal(move)
+		result := g.isRookMoveLegal(move)
+		return result
 	case Knight:
-		return g.isKnightMoveLegal(move)
+		result := g.isKnightMoveLegal(move)
+		return result
 	case Bishop:
-		return g.isBishopMoveLegal(move)
+		result := g.isBishopMoveLegal(move)
+		return result
 	case Queen:
-		return g.isQueenMoveLegal(move)
+		result := g.isQueenMoveLegal(move)
+		return result
 	case King:
-		return g.isKingMoveLegal(move)
+		result := g.isKingMoveLegal(move)
+		return result
 	}
 
 	return false
@@ -564,18 +623,11 @@ func (g *Game) updateHalfMoveClock(move Move) {
 }
 
 func (g *Game) canCastle(kingside bool) bool {
-	// Simplified castling check
-	if g.activeColor == White {
-		if kingside {
-			return g.castlingRights.WhiteKingside
-		}
-		return g.castlingRights.WhiteQueenside
-	}
-
+	// Use the detailed castling validation functions
 	if kingside {
-		return g.castlingRights.BlackKingside
+		return g.canCastleKingside(g.activeColor)
 	}
-	return g.castlingRights.BlackQueenside
+	return g.canCastleQueenside(g.activeColor)
 }
 
 func (g *Game) isInCheck(color Color) bool {
@@ -594,14 +646,397 @@ func (g *Game) isInCheck(color Color) bool {
 	}
 
 	// Check if any opponent piece can attack the king
-	// This is a simplified implementation
+	opponentColor := White
+	if color == White {
+		opponentColor = Black
+	}
+
+
+	// Check all opponent pieces to see if they can attack the king
+	for sq := Square(0); sq < 64; sq++ {
+		piece := g.board.GetPiece(sq)
+		if piece.IsEmpty() || piece.Color != opponentColor {
+			continue
+		}
+
+		// Generate pseudo-legal moves for the opponent piece
+		moves := g.generatePseudoLegalMoves(sq, piece)
+
+		// Check if any move attacks the king
+		for _, move := range moves {
+			if move.To == kingSquare {
+				return true
+			}
+		}
+	}
+
 	return false
+}
+
+// GetAllLegalMoves generates all legal moves for the current player
+func (g *Game) GetAllLegalMoves() []Move {
+	var legalMoves []Move
+
+	// Iterate through all squares
+	for rank := 0; rank < 8; rank++ {
+		for file := 0; file < 8; file++ {
+			square := Square(rank*8 + file)
+			piece := g.board.GetPiece(square)
+
+			// Skip empty squares and opponent pieces
+			if piece.IsEmpty() || piece.Color != g.activeColor {
+				continue
+			}
+
+			// Generate pseudo-legal moves for this piece
+			moves := g.generatePseudoLegalMoves(square, piece)
+
+			// Filter out illegal moves (those that leave king in check)
+			for _, move := range moves {
+				if g.IsLegalMove(move) {
+					legalMoves = append(legalMoves, move)
+				}
+			}
+		}
+	}
+
+	return legalMoves
+}
+
+// generatePseudoLegalMoves generates all pseudo-legal moves for a piece at the given square
+func (g *Game) generatePseudoLegalMoves(from Square, piece Piece) []Move {
+	var moves []Move
+	pieceType := piece.Type
+
+	switch pieceType {
+	case Pawn:
+		moves = append(moves, g.generatePawnMoves(from)...)
+	case Rook:
+		moves = append(moves, g.generateRookMoves(from)...)
+	case Knight:
+		moves = append(moves, g.generateKnightMoves(from)...)
+	case Bishop:
+		moves = append(moves, g.generateBishopMoves(from)...)
+	case Queen:
+		moves = append(moves, g.generateQueenMoves(from)...)
+	case King:
+		moves = append(moves, g.generateKingMoves(from)...)
+	}
+
+	return moves
+}
+
+// generatePawnMoves generates all pseudo-legal pawn moves
+func (g *Game) generatePawnMoves(from Square) []Move {
+	var moves []Move
+	piece := g.board.GetPiece(from)
+	color := piece.Color
+
+	direction := 1
+	startRank := 1
+	if color == Black {
+		direction = -1
+		startRank = 6
+	}
+
+	rank := int(from / 8)
+	file := int(from % 8)
+
+	// Forward move
+	toSquare := Square((rank+direction)*8 + file)
+	if rank+direction >= 0 && rank+direction < 8 && g.board.GetPiece(toSquare).IsEmpty() {
+		moves = append(moves, Move{From: from, To: toSquare, Type: Normal, Piece: piece})
+
+		// Double move from starting position
+		if rank == startRank {
+			toSquare2 := Square((rank+2*direction)*8 + file)
+			if g.board.GetPiece(toSquare2).IsEmpty() {
+				moves = append(moves, Move{From: from, To: toSquare2, Type: Normal, Piece: piece})
+			}
+		}
+	}
+
+	// Captures
+	for _, fileOffset := range []int{-1, 1} {
+		newFile := file + fileOffset
+		newRank := rank + direction
+		if newFile >= 0 && newFile < 8 && newRank >= 0 && newRank < 8 {
+			toSquare := Square(newRank*8 + newFile)
+			targetPiece := g.board.GetPiece(toSquare)
+			if !targetPiece.IsEmpty() && targetPiece.Color != color {
+				moves = append(moves, Move{From: from, To: toSquare, Type: Normal, Piece: piece})
+			}
+		}
+	}
+
+	return moves
+}
+
+// generateSlidingMoves generates moves for sliding pieces (rook, bishop, queen)
+func (g *Game) generateSlidingMoves(from Square, directions [][]int) []Move {
+	var moves []Move
+	piece := g.board.GetPiece(from)
+	color := piece.Color
+
+	rank := int(from / 8)
+	file := int(from % 8)
+
+	for _, dir := range directions {
+		for i := 1; i < 8; i++ {
+			newRank := rank + dir[0]*i
+			newFile := file + dir[1]*i
+
+			if newRank < 0 || newRank >= 8 || newFile < 0 || newFile >= 8 {
+				break
+			}
+
+			toSquare := Square(newRank*8 + newFile)
+			targetPiece := g.board.GetPiece(toSquare)
+
+			if targetPiece.IsEmpty() {
+				moves = append(moves, Move{From: from, To: toSquare, Type: Normal, Piece: piece})
+			} else {
+				if targetPiece.Color != color {
+					moves = append(moves, Move{From: from, To: toSquare, Type: Normal, Piece: piece})
+				}
+				break
+			}
+		}
+	}
+
+	return moves
+}
+
+// generateKnightMoves generates all pseudo-legal knight moves
+func (g *Game) generateKnightMoves(from Square) []Move {
+	var moves []Move
+	piece := g.board.GetPiece(from)
+	color := piece.Color
+
+	rank := int(from / 8)
+	file := int(from % 8)
+
+	knightMoves := [][]int{{2, 1}, {2, -1}, {-2, 1}, {-2, -1}, {1, 2}, {1, -2}, {-1, 2}, {-1, -2}}
+
+	for _, move := range knightMoves {
+		newRank := rank + move[0]
+		newFile := file + move[1]
+
+		if newRank >= 0 && newRank < 8 && newFile >= 0 && newFile < 8 {
+			toSquare := Square(newRank*8 + newFile)
+			targetPiece := g.board.GetPiece(toSquare)
+
+			if targetPiece.IsEmpty() || targetPiece.Color != color {
+				moves = append(moves, Move{From: from, To: toSquare, Type: Normal, Piece: piece})
+			}
+		}
+	}
+
+	return moves
+}
+
+// generateRookMoves generates all pseudo-legal rook moves
+func (g *Game) generateRookMoves(from Square) []Move {
+	return g.generateSlidingMoves(from, [][]int{{0, 1}, {0, -1}, {1, 0}, {-1, 0}})
+}
+
+// generateBishopMoves generates all pseudo-legal bishop moves
+func (g *Game) generateBishopMoves(from Square) []Move {
+	return g.generateSlidingMoves(from, [][]int{{1, 1}, {1, -1}, {-1, 1}, {-1, -1}})
+}
+
+// generateQueenMoves generates all pseudo-legal queen moves
+func (g *Game) generateQueenMoves(from Square) []Move {
+	return g.generateSlidingMoves(from, [][]int{{0, 1}, {0, -1}, {1, 0}, {-1, 0}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}})
+}
+
+// generateKingMoves generates all pseudo-legal king moves
+func (g *Game) generateKingMoves(from Square) []Move {
+	var moves []Move
+	piece := g.board.GetPiece(from)
+	color := piece.Color
+
+	rank := int(from / 8)
+	file := int(from % 8)
+
+	kingMoves := [][]int{{0, 1}, {0, -1}, {1, 0}, {-1, 0}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}
+
+	for _, move := range kingMoves {
+		newRank := rank + move[0]
+		newFile := file + move[1]
+
+		if newRank >= 0 && newRank < 8 && newFile >= 0 && newFile < 8 {
+			toSquare := Square(newRank*8 + newFile)
+			targetPiece := g.board.GetPiece(toSquare)
+
+			if targetPiece.IsEmpty() || targetPiece.Color != color {
+				moves = append(moves, Move{From: from, To: toSquare, Type: Normal, Piece: piece})
+			}
+		}
+	}
+
+	// Add castling moves
+	moves = append(moves, g.generateCastlingMoves(from)...)
+
+	return moves
+}
+
+// generateCastlingMoves generates castling moves for the king
+func (g *Game) generateCastlingMoves(from Square) []Move {
+	var moves []Move
+	piece := g.board.GetPiece(from)
+	color := piece.Color
+
+	// Only generate castling moves if the king is on its starting square
+	expectedKingSquare := E1
+	if color == Black {
+		expectedKingSquare = E8
+	}
+
+	if from != expectedKingSquare {
+		return moves
+	}
+
+	// Try kingside castling
+	if g.canCastleKingside(color) {
+		kingsideMove, err := g.parseCastlingMove(true)
+		if err == nil {
+			moves = append(moves, kingsideMove)
+		}
+	}
+
+	// Try queenside castling
+	if g.canCastleQueenside(color) {
+		queensideMove, err := g.parseCastlingMove(false)
+		if err == nil {
+			moves = append(moves, queensideMove)
+		}
+	}
+
+	return moves
+}
+
+// canCastleKingside checks if kingside castling is possible for the given color
+func (g *Game) canCastleKingside(color Color) bool {
+	// Check castling rights
+	if color == White && !g.castlingRights.WhiteKingside {
+		return false
+	}
+	if color == Black && !g.castlingRights.BlackKingside {
+		return false
+	}
+
+	// Check if squares between king and rook are empty
+	kingSquare := E1
+	rookSquare := H1
+	if color == Black {
+		kingSquare = E8
+		rookSquare = H8
+	}
+
+	// Check squares F and G (between king and rook)
+	for square := kingSquare + 1; square < rookSquare; square++ {
+		if !g.board.GetPiece(square).IsEmpty() {
+			return false
+		}
+	}
+
+	// Check if king is currently in check
+	if g.isInCheck(color) {
+		return false
+	}
+
+	// Check if king passes through or ends up in check
+	for square := kingSquare; square <= kingSquare+2; square++ {
+		// Create a temporary move to test
+		tempMove := Move{From: kingSquare, To: square, Type: Normal, Piece: g.board.GetPiece(kingSquare)}
+		if square != kingSquare && g.wouldBeInCheckAfterMove(tempMove, color) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// canCastleQueenside checks if queenside castling is possible for the given color
+func (g *Game) canCastleQueenside(color Color) bool {
+	// Check castling rights
+	if color == White && !g.castlingRights.WhiteQueenside {
+		return false
+	}
+	if color == Black && !g.castlingRights.BlackQueenside {
+		return false
+	}
+
+	// Check if squares between king and rook are empty
+	kingSquare := E1
+	rookSquare := A1
+	if color == Black {
+		kingSquare = E8
+		rookSquare = A8
+	}
+
+	// Check squares B, C, D (between rook and king)
+	for square := rookSquare + 1; square < kingSquare; square++ {
+		if !g.board.GetPiece(square).IsEmpty() {
+			return false
+		}
+	}
+
+	// Check if king is currently in check
+	if g.isInCheck(color) {
+		return false
+	}
+
+	// Check if king passes through or ends up in check
+	for square := kingSquare; square >= kingSquare-2; square-- {
+		// Create a temporary move to test
+		tempMove := Move{From: kingSquare, To: square, Type: Normal, Piece: g.board.GetPiece(kingSquare)}
+		if square != kingSquare && g.wouldBeInCheckAfterMove(tempMove, color) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// wouldBeInCheckAfterMove checks if the king would be in check after a given move
+func (g *Game) wouldBeInCheckAfterMove(move Move, kingColor Color) bool {
+	// Create a copy of the game to test the move
+	gameCopy := g.copy()
+
+	// Make the move on the copy using makeMoveWithoutStatusUpdate to avoid recursion
+	gameCopy.makeMoveWithoutStatusUpdate(move)
+
+	// Check if the king is in check in the resulting position
+	return gameCopy.isInCheck(kingColor)
 }
 
 func (g *Game) updateGameStatus() {
 	// Check for checkmate, stalemate, draw conditions
-	// This is a placeholder implementation
-	g.status = InProgress
+	legalMoves := g.GetAllLegalMoves()
+
+	if len(legalMoves) == 0 {
+		// No legal moves available
+		if g.isInCheck(g.activeColor) {
+			// King is in check and has no legal moves = checkmate
+			if g.activeColor == White {
+				g.status = BlackWins
+			} else {
+				g.status = WhiteWins
+			}
+		} else {
+			// King is not in check but has no legal moves = stalemate
+			g.status = Draw
+		}
+	} else {
+		// Game continues - check if king is in check
+		if g.isInCheck(g.activeColor) {
+			g.status = Check
+		} else {
+			g.status = InProgress
+		}
+	}
 }
 
 func (g *Game) copy() *Game {
