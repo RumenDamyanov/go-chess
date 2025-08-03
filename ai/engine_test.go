@@ -101,7 +101,7 @@ func TestGenerateLegalMoves(t *testing.T) {
 	game := engine.NewGame()
 	ai := NewRandomAI()
 
-	moves := ai.generateLegalMoves(game)
+	moves := ai.GenerateLegalMoves(game)
 
 	if len(moves) == 0 {
 		t.Error("Expected some legal moves in starting position")
@@ -133,6 +133,6 @@ func BenchmarkGenerateLegalMoves(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = ai.generateLegalMoves(game)
+		_ = ai.GenerateLegalMoves(game)
 	}
 }

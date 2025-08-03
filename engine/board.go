@@ -12,8 +12,10 @@ import (
 type Color int
 
 const (
+	// None represents no color (empty squares).
+	None Color = iota
 	// White represents the white player.
-	White Color = iota
+	White
 	// Black represents the black player.
 	Black
 )
@@ -21,6 +23,8 @@ const (
 // String returns the string representation of a color.
 func (c Color) String() string {
 	switch c {
+	case None:
+		return "none"
 	case White:
 		return "white"
 	case Black:
