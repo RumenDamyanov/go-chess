@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/rumendamyanov/go-chess/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/rumendamyanov/go-chess/actions/workflows/github-code-scanning/codeql)
 [![Dependabot](https://github.com/rumendamyanov/go-chess/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/rumendamyanov/go-chess/actions/workflows/dependabot/dependabot-updates)
 [![codecov](https://codecov.io/gh/rumendamyanov/go-chess/graph/badge.svg)](https://codecov.io/gh/rumendamyanov/go-chess)
-[![Go Report Card](https://goreportcard.com/badge/github.com/rumendamyanov/go-chess?)](https://goreportcard.com/report/github.com/rumendamyanov/go-chess)
+[![Go Report Card](https://goreportcard.com/badge/github.com/rumendamyanov/go-chess?5)](https://goreportcard.com/report/github.com/rumendamyanov/go-chess)
 [![Go Reference](https://pkg.go.dev/badge/github.com/rumendamyanov/go-chess.svg)](https://pkg.go.dev/github.com/rumendamyanov/go-chess)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/rumendamyanov/go-chess/blob/master/LICENSE.md)
 
