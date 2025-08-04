@@ -85,3 +85,4 @@ minimal_test.go
 # Miscellaneous
 docs/
 wiki/
+*.patch
