@@ -130,6 +130,7 @@ func (s *Server) SetupRoutes(r *gin.Engine) {
 		api.POST("/games/:id/moves", s.makeMove)
 		api.GET("/games/:id/moves", s.getMoveHistory)
 		api.POST("/games/:id/ai-move", s.getAIMove)
+		api.POST("/games/:id/ai-hint", s.getAIHint)
 
 		// Chat functionality
 		api.POST("/games/:id/chat", s.chatWithAI)
@@ -331,6 +332,12 @@ func (s *Server) getAIMove(c *gin.Context) {
 		return
 	}
 
+	// Validate that it's the AI's turn (assuming AI plays as black)
+	if game.ActiveColor().String() != "black" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "not_ai_turn", Message: "It's not the AI's turn to move"})
+		return
+	}
+
 	// Parse difficulty
 	var difficulty ai.Difficulty
 	switch req.Level {
@@ -398,6 +405,97 @@ func (s *Server) getAIMove(c *gin.Context) {
 		"engine":   req.Engine,
 		"provider": req.Provider,
 	})
+}
+
+// getAIHint gets a move suggestion from the AI without making the move.
+func (s *Server) getAIHint(c *gin.Context) {
+	gameID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid_game_id"})
+		return
+	}
+
+	var req AIRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req.Level = "medium"  // Default level
+		req.Engine = "random" // Default engine
+	}
+
+	s.gamesMux.RLock()
+	game, exists := s.games[gameID]
+	s.gamesMux.RUnlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "game_not_found"})
+		return
+	}
+
+	// Parse difficulty
+	var difficulty ai.Difficulty
+	switch req.Level {
+	case "beginner":
+		difficulty = ai.DifficultyBeginner
+	case "easy":
+		difficulty = ai.DifficultyEasy
+	case "medium":
+		difficulty = ai.DifficultyMedium
+	case "hard":
+		difficulty = ai.DifficultyHard
+	default:
+		difficulty = ai.DifficultyMedium
+	}
+
+	// Create AI engine
+	var aiEngine ai.Engine
+	switch req.Engine {
+	case "llm":
+		// Use LLM AI if configured and provider specified
+		if s.config.LLMAI.Enabled && req.Provider != "" && s.config.HasValidLLMProvider(req.Provider) {
+			llmEngine, err := ai.NewLLMAIFromEnv(req.Provider, difficulty)
+			if err != nil {
+				s.logger.Warn("Failed to create LLM AI engine, falling back to random", zap.Error(err))
+				aiEngine = ai.NewRandomAI()
+			} else {
+				aiEngine = llmEngine
+			}
+		} else {
+			// Fallback to random if LLM not available
+			aiEngine = ai.NewRandomAI()
+		}
+	case "minimax":
+		aiEngine = ai.NewMinimaxAI(difficulty)
+	default:
+		aiEngine = ai.NewRandomAI()
+	}
+
+	aiEngine.SetDifficulty(difficulty)
+
+	// Get the best move suggestion (without making it)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bestMove, err := aiEngine.GetBestMove(ctx, game)
+	if err != nil {
+		// Fallback to a random legal move if AI engine fails
+		legalMoves := game.GetAllLegalMoves()
+		if len(legalMoves) == 0 {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "no_legal_moves"})
+			return
+		}
+		moveIndex := int(time.Now().UnixNano()) % len(legalMoves)
+		bestMove = legalMoves[moveIndex]
+	}
+
+	// Return the hint without making the move
+	hintResponse := map[string]interface{}{
+		"from":        bestMove.From.String(),
+		"to":          bestMove.To.String(),
+		"explanation": fmt.Sprintf("AI suggests moving from %s to %s", bestMove.From.String(), bestMove.To.String()),
+		"level":       req.Level,
+		"engine":      req.Engine,
+	}
+
+	c.JSON(http.StatusOK, hintResponse)
 }
 
 // getLegalMoves gets all legal moves for the current position.
