@@ -276,14 +276,29 @@ func TestGetAIMove(t *testing.T) {
 	json.Unmarshal(createRR.Body.Bytes(), &createResp)
 	gameID := createResp["id"]
 
-	// Get AI move
+	// Make a move first so it becomes black's turn (AI's turn)
+	moveData := map[string]string{"from": "e2", "to": "e4"}
+	moveJSON, _ := json.Marshal(moveData)
+	moveURL := fmt.Sprintf("/api/games/%v/moves", gameID)
+	moveReq, _ := http.NewRequest("POST", moveURL, bytes.NewBuffer(moveJSON))
+	moveReq.Header.Set("Content-Type", "application/json")
+	moveRR := httptest.NewRecorder()
+	router.ServeHTTP(moveRR, moveReq)
+
+	if moveRR.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for initial move, got %d", moveRR.Code)
+		return
+	}
+
+	// Now get AI move (should work since it's black's turn)
 	aiMoveURL := fmt.Sprintf("/api/games/%v/ai-move", gameID)
 	aiReq, _ := http.NewRequest("POST", aiMoveURL, nil)
 	aiRR := httptest.NewRecorder()
 	router.ServeHTTP(aiRR, aiReq)
 
 	if aiRR.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", aiRR.Code)
+		t.Errorf("Expected status 200, got %d. Response: %s", aiRR.Code, aiRR.Body.String())
+		return
 	}
 
 	var aiResp map[string]interface{}
@@ -292,6 +307,127 @@ func TestGetAIMove(t *testing.T) {
 	// Check that AI move response contains a move
 	if _, ok := aiResp["move"]; !ok {
 		t.Error("Expected move in AI response")
+	}
+
+	// Check that response contains expected fields
+	if _, ok := aiResp["notation"]; !ok {
+		t.Error("Expected notation in AI response")
+	}
+	if _, ok := aiResp["level"]; !ok {
+		t.Error("Expected level in AI response")
+	}
+	if _, ok := aiResp["engine"]; !ok {
+		t.Error("Expected engine in AI response")
+	}
+}
+
+// TestGetAIMoveWrongTurn tests the AI move endpoint when it's not AI's turn
+func TestGetAIMoveWrongTurn(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Create a game (starts with white's turn)
+	createReq, _ := http.NewRequest("POST", "/api/games", nil)
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+	gameID := createResp["id"]
+
+	// Try to get AI move when it's white's turn (should fail)
+	aiMoveURL := fmt.Sprintf("/api/games/%v/ai-move", gameID)
+	aiReq, _ := http.NewRequest("POST", aiMoveURL, nil)
+	aiRR := httptest.NewRecorder()
+	router.ServeHTTP(aiRR, aiReq)
+
+	if aiRR.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 when not AI turn, got %d", aiRR.Code)
+	}
+
+	var errResp map[string]interface{}
+	json.Unmarshal(aiRR.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "not_ai_turn" {
+		t.Errorf("Expected error 'not_ai_turn', got '%v'", errResp["error"])
+	}
+}
+
+// TestGetAIHint tests the AI hint endpoint
+func TestGetAIHint(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Create a game
+	createReq, _ := http.NewRequest("POST", "/api/games", nil)
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+	gameID := createResp["id"]
+
+	// Test getting an AI hint with default settings
+	hintURL := fmt.Sprintf("/api/games/%v/ai-hint", gameID)
+	hintReq, _ := http.NewRequest("POST", hintURL, nil)
+	hintRR := httptest.NewRecorder()
+	router.ServeHTTP(hintRR, hintReq)
+
+	if hintRR.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Response: %s", hintRR.Code, hintRR.Body.String())
+	}
+
+	var hintResp map[string]interface{}
+	err := json.Unmarshal(hintRR.Body.Bytes(), &hintResp)
+	if err != nil {
+		t.Errorf("Failed to unmarshal hint response: %v", err)
+	}
+
+	// Check that hint response contains required fields
+	if _, ok := hintResp["from"]; !ok {
+		t.Error("Expected 'from' field in hint response")
+	}
+	if _, ok := hintResp["to"]; !ok {
+		t.Error("Expected 'to' field in hint response")
+	}
+	if _, ok := hintResp["explanation"]; !ok {
+		t.Error("Expected 'explanation' field in hint response")
+	}
+
+	// Test with specific AI request parameters
+	aiRequestData := map[string]string{
+		"level":  "easy",
+		"engine": "random",
+	}
+	aiRequestJSON, _ := json.Marshal(aiRequestData)
+	hintReq2, _ := http.NewRequest("POST", hintURL, bytes.NewBuffer(aiRequestJSON))
+	hintReq2.Header.Set("Content-Type", "application/json")
+	hintRR2 := httptest.NewRecorder()
+	router.ServeHTTP(hintRR2, hintReq2)
+
+	if hintRR2.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for hint with parameters, got %d", hintRR2.Code)
+	}
+
+	var hintResp2 map[string]interface{}
+	json.Unmarshal(hintRR2.Body.Bytes(), &hintResp2)
+
+	// Verify level is reflected in response
+	if level, ok := hintResp2["level"]; ok {
+		if level != "easy" {
+			t.Errorf("Expected level 'easy', got '%v'", level)
+		}
+	}
+
+	// Verify engine is reflected in response
+	if engine, ok := hintResp2["engine"]; ok {
+		if engine != "random" {
+			t.Errorf("Expected engine 'random', got '%v'", engine)
+		}
 	}
 }
 
