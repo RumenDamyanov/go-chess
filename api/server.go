@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/rumendamyanov/go-chess/ai"
+	"github.com/rumendamyanov/go-chess/chat"
 	"github.com/rumendamyanov/go-chess/config"
 	"github.com/rumendamyanov/go-chess/engine"
 )
@@ -25,6 +26,7 @@ type GameResponse struct {
 	ID          int            `json:"id"`
 	Status      string         `json:"status"`
 	ActiveColor string         `json:"active_color"`
+	AIColor     string         `json:"ai_color,omitempty"` // Which color the AI plays
 	Board       string         `json:"board"`
 	MoveCount   int            `json:"move_count"`
 	MoveHistory []MoveResponse `json:"move_history"`
@@ -51,10 +53,22 @@ type MoveRequest struct {
 }
 
 // AIRequest represents an AI move request.
+// AIRequest represents an AI move request.
 type AIRequest struct {
 	Level    string `json:"level"`    // beginner, easy, medium, hard, expert
 	Engine   string `json:"engine"`   // random, minimax, llm
 	Provider string `json:"provider"` // openai, anthropic, gemini, xai, deepseek (for LLM engine)
+}
+
+// GameCreateRequest represents a game creation request.
+type GameCreateRequest struct {
+	AIColor string `json:"ai_color,omitempty"` // "white", "black", or empty for default (black)
+}
+
+// GameMetadata stores additional game information.
+type GameMetadata struct {
+	AIColor   string    `json:"ai_color"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ChatRequest represents a chat message request.
@@ -76,24 +90,36 @@ type ErrorResponse struct {
 }
 
 // Server represents the chess API server.
+// Server represents the HTTP API server.
 type Server struct {
-	config   *config.Config
-	logger   *zap.Logger
-	games    map[int]*engine.Game
-	gamesMux sync.RWMutex
-	nextID   int
-	upgrader websocket.Upgrader
+	config       *config.Config
+	logger       *zap.Logger
+	games        map[int]*engine.Game
+	gameMetadata map[int]*GameMetadata
+	gamesMux     sync.RWMutex
+	nextID       int
+	upgrader     websocket.Upgrader
+	chatService  *chat.ChatService
 }
 
 // NewServer creates a new API server.
 func NewServer(cfg *config.Config) *Server {
 	logger, _ := zap.NewProduction()
 
+	// Initialize chat service
+	chatService, err := chat.NewChatService(logger)
+	if err != nil {
+		logger.Error("Failed to create chat service", zap.Error(err))
+		// Continue without chat service for now
+	}
+
 	return &Server{
-		config: cfg,
-		logger: logger,
-		games:  make(map[int]*engine.Game),
-		nextID: 1,
+		config:       cfg,
+		logger:       logger,
+		games:        make(map[int]*engine.Game),
+		gameMetadata: make(map[int]*GameMetadata),
+		nextID:       1,
+		chatService:  chatService,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins for demo purposes
@@ -135,6 +161,7 @@ func (s *Server) SetupRoutes(r *gin.Engine) {
 		// Chat functionality
 		api.POST("/games/:id/chat", s.chatWithAI)
 		api.POST("/games/:id/react", s.getAIReaction)
+		api.POST("/chat", s.generalChat) // General chat for demos
 
 		// Game analysis
 		api.GET("/games/:id/legal-moves", s.getLegalMoves)
@@ -154,15 +181,33 @@ func (s *Server) createGame(c *gin.Context) {
 	s.gamesMux.Lock()
 	defer s.gamesMux.Unlock()
 
+	// Parse request body for AI color preference
+	var req GameCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// If no body or invalid JSON, use defaults
+		req.AIColor = "black" // Default: AI plays black
+	}
+
+	// Validate AI color
+	if req.AIColor != "white" && req.AIColor != "black" {
+		req.AIColor = "black" // Default to black if invalid
+	}
+
 	game := engine.NewGame()
 	gameID := s.nextID
 	s.nextID++
 
 	s.games[gameID] = game
+	s.gameMetadata[gameID] = &GameMetadata{
+		AIColor:   req.AIColor,
+		CreatedAt: time.Now(),
+	}
 
 	response := s.gameToResponse(gameID, game)
 
-	s.logger.Info("Created new game", zap.Int("game_id", gameID))
+	s.logger.Info("Created new game",
+		zap.Int("game_id", gameID),
+		zap.String("ai_color", req.AIColor))
 	c.JSON(http.StatusCreated, response)
 }
 
@@ -324,17 +369,28 @@ func (s *Server) getAIMove(c *gin.Context) {
 	}
 
 	s.gamesMux.RLock()
-	game, exists := s.games[gameID]
+	game, gameExists := s.games[gameID]
+	metadata, metadataExists := s.gameMetadata[gameID]
 	s.gamesMux.RUnlock()
 
-	if !exists {
+	if !gameExists {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "game_not_found"})
 		return
 	}
 
-	// Validate that it's the AI's turn (assuming AI plays as black)
-	if game.ActiveColor().String() != "black" {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "not_ai_turn", Message: "It's not the AI's turn to move"})
+	// Get AI color from metadata, default to black if not found
+	aiColor := "black"
+	if metadataExists && metadata.AIColor != "" {
+		aiColor = metadata.AIColor
+	}
+
+	// Validate that it's the AI's turn
+	currentColor := game.ActiveColor().String()
+	if currentColor != aiColor {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "not_ai_turn",
+			Message: fmt.Sprintf("It's not the AI's turn to move (AI plays %s, current turn: %s)", aiColor, currentColor),
+		})
 		return
 	}
 
@@ -667,14 +723,27 @@ func (s *Server) gameToResponse(id int, game *engine.Game) GameResponse {
 		moves[i] = s.moveToResponse(move)
 	}
 
+	// Get AI color from metadata
+	aiColor := "black" // Default
+	if metadata, exists := s.gameMetadata[id]; exists {
+		aiColor = metadata.AIColor
+	}
+
+	// Get creation time from metadata
+	createdAt := time.Now().UTC()
+	if metadata, exists := s.gameMetadata[id]; exists {
+		createdAt = metadata.CreatedAt
+	}
+
 	return GameResponse{
 		ID:          id,
 		Status:      game.Status().String(),
 		ActiveColor: game.ActiveColor().String(),
+		AIColor:     aiColor,
 		Board:       game.Board().String(),
 		MoveCount:   game.MoveCount(),
 		MoveHistory: moves,
-		CreatedAt:   time.Now().UTC(), // TODO: Store actual creation time
+		CreatedAt:   createdAt,
 	}
 }
 
@@ -735,43 +804,51 @@ func (s *Server) chatWithAI(c *gin.Context) {
 		return
 	}
 
-	// Use default provider if not specified
-	provider := req.Provider
-	if provider == "" {
-		provider = s.config.LLMAI.DefaultProvider
-		if provider == "" {
-			provider = "openai"
-		}
-	}
-
-	// Create LLM engine config
-	llmConfig := ai.LLMConfig{
-		Provider:    ai.LLMProvider(provider),
-		APIKey:      s.config.LLMAI.Providers[provider].APIKey,
-		Model:       s.config.LLMAI.Providers[provider].Model,
-		Endpoint:    s.config.LLMAI.Providers[provider].Endpoint,
-		Difficulty:  ai.DifficultyEasy, // Use easy difficulty for chat
-		Personality: "friendly",
-		ChatEnabled: true,
-	}
-
-	llmEngine, err := ai.NewLLMAIEngine(llmConfig)
-	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create AI engine: %v", err)})
+	// Check if chat service is available
+	if s.chatService == nil {
+		c.JSON(503, gin.H{"error": "Chat service unavailable"})
 		return
 	}
 
-	// Generate chat response
+	// Create move context from current game state
+	var moveContext *chat.MoveContext
+	if game != nil {
+		moveHistory := game.MoveHistory()
+		var lastMoveStr string
+		if len(moveHistory) > 0 {
+			lastMove := moveHistory[len(moveHistory)-1]
+			lastMoveStr = lastMove.String() // Convert Move to string
+		}
+
+		moveContext = &chat.MoveContext{
+			LastMove:      lastMoveStr,
+			MoveCount:     len(moveHistory),
+			CurrentPlayer: game.ActiveColor().String(),
+			GameStatus:    game.Status().String(),
+			Position:      "placeholder-fen", // TODO: Implement FEN if needed
+		}
+	}
+
+	// Create chat request for the service
+	chatReq := chat.ChatRequest{
+		GameID:   gameID,
+		Message:  req.Message,
+		UserID:   "player", // Default user ID
+		MoveData: moveContext,
+	}
+
+	// Generate chat response using the chat service
 	ctx := context.Background()
-	response, err := llmEngine.Chat(ctx, req.Message, game)
+	response, err := s.chatService.Chat(ctx, chatReq)
 	if err != nil {
+		s.logger.Error("Failed to get chat response", zap.Error(err))
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get AI response: %v", err)})
 		return
 	}
 
 	c.JSON(200, ChatResponse{
-		Response: response,
-		Provider: provider,
+		Response: response.Message,
+		Provider: "go-chatbot", // The provider used by our chat service
 	})
 }
 
@@ -799,13 +876,10 @@ func (s *Server) getAIReaction(c *gin.Context) {
 		return
 	}
 
-	// Use default provider if not specified
-	provider := req.Provider
-	if provider == "" {
-		provider = s.config.LLMAI.DefaultProvider
-		if provider == "" {
-			provider = "openai"
-		}
+	// Check if chat service is available
+	if s.chatService == nil {
+		c.JSON(503, gin.H{"error": "Chat service unavailable"})
+		return
 	}
 
 	// Parse the move
@@ -815,33 +889,72 @@ func (s *Server) getAIReaction(c *gin.Context) {
 		return
 	}
 
-	// Create LLM engine config
-	llmConfig := ai.LLMConfig{
-		Provider:    ai.LLMProvider(provider),
-		APIKey:      s.config.LLMAI.Providers[provider].APIKey,
-		Model:       s.config.LLMAI.Providers[provider].Model,
-		Endpoint:    s.config.LLMAI.Providers[provider].Endpoint,
-		Difficulty:  ai.DifficultyEasy, // Use easy difficulty for reactions
-		Personality: "entertaining",
-		ChatEnabled: true,
+	// Create move context for the specific move
+	moveHistory := game.MoveHistory()
+	moveContext := &chat.MoveContext{
+		LastMove:      move.String(),
+		MoveCount:     len(moveHistory),
+		CurrentPlayer: game.ActiveColor().String(),
+		GameStatus:    game.Status().String(),
+		Position:      "placeholder-fen",
 	}
 
-	llmEngine, err := ai.NewLLMAIEngine(llmConfig)
-	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create AI engine: %v", err)})
-		return
+	// Create a request for AI reaction to the specific move
+	reactionMessage := fmt.Sprintf("React to this chess move: %s", req.Move)
+	chatReq := chat.ChatRequest{
+		GameID:   gameID,
+		Message:  reactionMessage,
+		UserID:   "system", // System request for move reaction
+		MoveData: moveContext,
 	}
 
-	// Generate reaction to the move
+	// Generate reaction using the chat service
 	ctx := context.Background()
-	reaction, err := llmEngine.ReactToMove(ctx, move, game)
+	response, err := s.chatService.Chat(ctx, chatReq)
 	if err != nil {
+		s.logger.Error("Failed to get move reaction", zap.Error(err))
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get AI reaction: %v", err)})
 		return
 	}
 
 	c.JSON(200, ReactionResponse{
-		Reaction: reaction,
-		Provider: provider,
+		Reaction: response.Message,
+		Provider: "go-chatbot",
+	})
+}
+
+// generalChat handles general chat messages without game context
+func (s *Server) generalChat(c *gin.Context) {
+	if s.chatService == nil {
+		c.JSON(500, gin.H{"error": "Chat service not available"})
+		return
+	}
+
+	var req ChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// Create chat request for general conversation
+	chatReq := chat.ChatRequest{
+		GameID:   0, // No game context
+		Message:  req.Message,
+		UserID:   "demo-user",
+		MoveData: nil, // No move context
+	}
+
+	// Generate response using the chat service
+	ctx := context.Background()
+	response, err := s.chatService.Chat(ctx, chatReq)
+	if err != nil {
+		s.logger.Error("Failed to get chat response", zap.Error(err))
+		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get AI response: %v", err)})
+		return
+	}
+
+	c.JSON(200, ChatResponse{
+		Response: response.Message,
+		Provider: "go-chatbot",
 	})
 }
