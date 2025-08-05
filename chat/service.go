@@ -349,8 +349,12 @@ func (cs *ChatService) buildContextualMessage(userMessage string, conversation *
 
 	// Add game context if available
 	if moveData != nil {
+		positionPreview := moveData.Position
+		if len(positionPreview) > 20 {
+			positionPreview = positionPreview[:20] + "..."
+		}
 		contextBuilder.WriteString(fmt.Sprintf("[Game Context: Move %d, %s to play, Position: %s]",
-			moveData.MoveCount, moveData.CurrentPlayer, moveData.Position[:20]+"..."))
+			moveData.MoveCount, moveData.CurrentPlayer, positionPreview))
 		if moveData.LastMove != "" {
 			contextBuilder.WriteString(fmt.Sprintf(" [Last move: %s]", moveData.LastMove))
 		}
@@ -430,7 +434,7 @@ func (cs *ChatService) cleanResponse(response string) string {
 	return cleaned
 }
 
-func (cs *ChatService) generateSuggestions(conversation *Conversation, moveData *MoveContext) []string {
+func (cs *ChatService) generateSuggestions(_ *Conversation, moveData *MoveContext) []string {
 	suggestions := []string{
 		"What do you think about this position?",
 		"Any tips for improvement?",

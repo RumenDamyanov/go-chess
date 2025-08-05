@@ -456,9 +456,9 @@ func TestChatWithAI(t *testing.T) {
 	chatRR := httptest.NewRecorder()
 	router.ServeHTTP(chatRR, chatReq)
 
-	// Chat endpoint should return a response (might be an error if no LLM configured)
-	if chatRR.Code != http.StatusOK && chatRR.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status 200 or 500, got %d", chatRR.Code)
+	// Chat endpoint should return a response (might be an error if no LLM configured or chat service unavailable)
+	if chatRR.Code != http.StatusOK && chatRR.Code != http.StatusInternalServerError && chatRR.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 200, 500, or 503, got %d. Response: %s", chatRR.Code, chatRR.Body.String())
 	}
 }
 
@@ -594,5 +594,293 @@ func TestContentTypeValidation(t *testing.T) {
 	// The request might still work, but response should be valid
 	if moveRR.Code != http.StatusOK && moveRR.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 200 or 400, got %d", moveRR.Code)
+	}
+}
+
+// TestCreateGameWithAIColor tests game creation with configurable AI color
+func TestCreateGameWithAIColor(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Test creating game with AI playing white
+	gameCreateData := map[string]string{"ai_color": "white"}
+	gameCreateJSON, _ := json.Marshal(gameCreateData)
+	createReq, _ := http.NewRequest("POST", "/api/games", bytes.NewBuffer(gameCreateJSON))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	if createRR.Code != http.StatusCreated {
+		t.Errorf("Expected status 201, got %d", createRR.Code)
+	}
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+	gameID := createResp["id"]
+
+	// Verify the AI color was set in game metadata by checking game response
+	getReq, _ := http.NewRequest("GET", fmt.Sprintf("/api/games/%v", gameID), nil)
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, getReq)
+
+	if getRR.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", getRR.Code)
+	}
+
+	var gameResp map[string]interface{}
+	json.Unmarshal(getRR.Body.Bytes(), &gameResp)
+	if aiColor, ok := gameResp["ai_color"]; ok {
+		if aiColor != "white" {
+			t.Errorf("Expected AI color 'white', got '%v'", aiColor)
+		}
+	}
+}
+
+// TestCreateGameWithDefaultAIColor tests game creation with default AI color
+func TestCreateGameWithDefaultAIColor(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Test creating game without specifying AI color (should default to black)
+	createReq, _ := http.NewRequest("POST", "/api/games", nil)
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	if createRR.Code != http.StatusCreated {
+		t.Errorf("Expected status 201, got %d", createRR.Code)
+	}
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+	gameID := createResp["id"]
+
+	// Verify the AI color defaulted to black
+	getReq, _ := http.NewRequest("GET", fmt.Sprintf("/api/games/%v", gameID), nil)
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, getReq)
+
+	if getRR.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", getRR.Code)
+	}
+
+	var gameResp map[string]interface{}
+	json.Unmarshal(getRR.Body.Bytes(), &gameResp)
+	if aiColor, ok := gameResp["ai_color"]; ok {
+		if aiColor != "black" {
+			t.Errorf("Expected default AI color 'black', got '%v'", aiColor)
+		}
+	}
+}
+
+// TestCreateGameWithInvalidAIColor tests game creation with invalid AI color
+func TestCreateGameWithInvalidAIColor(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Test creating game with invalid AI color (should default to black)
+	gameCreateData := map[string]string{"ai_color": "red"}
+	gameCreateJSON, _ := json.Marshal(gameCreateData)
+	createReq, _ := http.NewRequest("POST", "/api/games", bytes.NewBuffer(gameCreateJSON))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	if createRR.Code != http.StatusCreated {
+		t.Errorf("Expected status 201, got %d", createRR.Code)
+	}
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+	gameID := createResp["id"]
+
+	// Verify the AI color defaulted to black when invalid color provided
+	getReq, _ := http.NewRequest("GET", fmt.Sprintf("/api/games/%v", gameID), nil)
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, getReq)
+
+	var gameResp map[string]interface{}
+	json.Unmarshal(getRR.Body.Bytes(), &gameResp)
+	if aiColor, ok := gameResp["ai_color"]; ok {
+		if aiColor != "black" {
+			t.Errorf("Expected AI color to default to 'black' for invalid input, got '%v'", aiColor)
+		}
+	}
+}
+
+// TestAIMoveWithWhiteAI tests AI move functionality when AI plays white
+func TestAIMoveWithWhiteAI(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Create game with AI playing white
+	gameCreateData := map[string]string{"ai_color": "white"}
+	gameCreateJSON, _ := json.Marshal(gameCreateData)
+	createReq, _ := http.NewRequest("POST", "/api/games", bytes.NewBuffer(gameCreateJSON))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+	gameID := createResp["id"]
+
+	// Try to get AI move immediately (should work since it's white's turn and AI plays white)
+	aiMoveURL := fmt.Sprintf("/api/games/%v/ai-move", gameID)
+	aiReq, _ := http.NewRequest("POST", aiMoveURL, nil)
+	aiRR := httptest.NewRecorder()
+	router.ServeHTTP(aiRR, aiReq)
+
+	if aiRR.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for AI white move, got %d. Response: %s", aiRR.Code, aiRR.Body.String())
+	}
+
+	var aiResp map[string]interface{}
+	json.Unmarshal(aiRR.Body.Bytes(), &aiResp)
+
+	// Check that AI move response contains expected fields
+	if _, ok := aiResp["move"]; !ok {
+		t.Error("Expected move in AI response")
+	}
+}
+
+// TestAIMoveWithBlackAI tests AI move functionality when AI plays black
+func TestAIMoveWithBlackAI(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Create game with AI playing black (default)
+	createReq, _ := http.NewRequest("POST", "/api/games", nil)
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+	gameID := createResp["id"]
+
+	// Try to get AI move immediately (should fail since it's white's turn and AI plays black)
+	aiMoveURL := fmt.Sprintf("/api/games/%v/ai-move", gameID)
+	aiReq, _ := http.NewRequest("POST", aiMoveURL, nil)
+	aiRR := httptest.NewRecorder()
+	router.ServeHTTP(aiRR, aiReq)
+
+	if aiRR.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 when requesting AI move for black on white's turn, got %d", aiRR.Code)
+	}
+
+	// Make a move so it becomes black's turn
+	moveData := map[string]string{"from": "e2", "to": "e4"}
+	moveJSON, _ := json.Marshal(moveData)
+	moveURL := fmt.Sprintf("/api/games/%v/moves", gameID)
+	moveReq, _ := http.NewRequest("POST", moveURL, bytes.NewBuffer(moveJSON))
+	moveReq.Header.Set("Content-Type", "application/json")
+	moveRR := httptest.NewRecorder()
+	router.ServeHTTP(moveRR, moveReq)
+
+	// Now try AI move again (should work since it's black's turn)
+	aiReq2, _ := http.NewRequest("POST", aiMoveURL, nil)
+	aiRR2 := httptest.NewRecorder()
+	router.ServeHTTP(aiRR2, aiReq2)
+
+	if aiRR2.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for AI black move after white move, got %d. Response: %s", aiRR2.Code, aiRR2.Body.String())
+	}
+}
+
+// TestGeneralChat tests the general chat endpoint
+func TestGeneralChat(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Test general chat endpoint
+	chatData := map[string]string{"message": "Tell me about chess"}
+	chatJSON, _ := json.Marshal(chatData)
+	chatReq, _ := http.NewRequest("POST", "/api/chat", bytes.NewBuffer(chatJSON))
+	chatReq.Header.Set("Content-Type", "application/json")
+	chatRR := httptest.NewRecorder()
+	router.ServeHTTP(chatRR, chatReq)
+
+	// Chat endpoint should return a response (might be an error if no chat service configured)
+	if chatRR.Code != http.StatusOK && chatRR.Code != http.StatusInternalServerError && chatRR.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 200, 500, or 503, got %d. Response: %s", chatRR.Code, chatRR.Body.String())
+	}
+
+	if chatRR.Code == http.StatusOK {
+		var chatResp map[string]interface{}
+		err := json.Unmarshal(chatRR.Body.Bytes(), &chatResp)
+		if err != nil {
+			t.Errorf("Failed to unmarshal chat response: %v", err)
+		}
+
+		// Check for expected response fields if successful
+		if _, ok := chatResp["message"]; !ok {
+			t.Error("Expected 'message' field in chat response")
+		}
+	}
+}
+
+// TestGameResponseContainsAIColor tests that game responses include AI color
+func TestGameResponseContainsAIColor(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Create game with specific AI color
+	gameCreateData := map[string]string{"ai_color": "white"}
+	gameCreateJSON, _ := json.Marshal(gameCreateData)
+	createReq, _ := http.NewRequest("POST", "/api/games", bytes.NewBuffer(gameCreateJSON))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+
+	// Verify create response includes AI color
+	if aiColor, ok := createResp["ai_color"]; !ok {
+		t.Error("Expected 'ai_color' field in game creation response")
+	} else if aiColor != "white" {
+		t.Errorf("Expected AI color 'white', got '%v'", aiColor)
+	}
+
+	// Test list games endpoint includes AI color
+	listReq, _ := http.NewRequest("GET", "/api/games", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+
+	var listResp map[string]interface{}
+	json.Unmarshal(listRR.Body.Bytes(), &listResp)
+
+	if games, ok := listResp["games"].([]interface{}); ok && len(games) > 0 {
+		if game, ok := games[0].(map[string]interface{}); ok {
+			if aiColor, ok := game["ai_color"]; !ok {
+				t.Error("Expected 'ai_color' field in listed game")
+			} else if aiColor != "white" {
+				t.Errorf("Expected AI color 'white' in listed game, got '%v'", aiColor)
+			}
+		}
+	}
+}
+
+// TestChatServiceIntegration tests integration with the chat service
+func TestChatServiceIntegration(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+
+	// Test that server initializes with chat service
+	if server.chatService == nil {
+		t.Error("Expected chat service to be initialized, got nil")
 	}
 }
