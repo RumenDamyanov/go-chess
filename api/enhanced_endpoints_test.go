@@ -57,8 +57,11 @@ func TestGameRoutes(t *testing.T) {
 	}
 
 	// Should return JSON
-	var games []GameResponse
-	err := json.Unmarshal(rr.Body.Bytes(), &games)
+	var gamesResponse struct {
+		Games []GameResponse `json:"games"`
+		Count int            `json:"count"`
+	}
+	err := json.Unmarshal(rr.Body.Bytes(), &gamesResponse)
 	if err != nil {
 		t.Errorf("Failed to unmarshal games response: %v", err)
 	}
@@ -73,7 +76,8 @@ func TestGameCreation(t *testing.T) {
 
 	server := NewServer(cfg)
 	gin.SetMode(gin.TestMode)
-	router := server.SetupRoutes()
+	router := gin.New()
+	server.SetupRoutes(router)
 
 	// Test create game
 	createReq := GameCreateRequest{
@@ -119,7 +123,8 @@ func TestMoveValidation(t *testing.T) {
 
 	server := NewServer(cfg)
 	gin.SetMode(gin.TestMode)
-	router := server.SetupRoutes()
+	router := gin.New()
+	server.SetupRoutes(router)
 
 	// First create a game
 	createReq := GameCreateRequest{AIColor: "black"}
@@ -153,18 +158,25 @@ func TestMoveValidation(t *testing.T) {
 		t.Errorf("Expected 200 for valid move, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	var moveResp MoveResponse
-	err = json.Unmarshal(rr.Body.Bytes(), &moveResp)
+	var gameResp GameResponse
+	err = json.Unmarshal(rr.Body.Bytes(), &gameResp)
 	if err != nil {
-		t.Errorf("Failed to unmarshal move response: %v", err)
+		t.Errorf("Failed to unmarshal game response: %v", err)
 	}
 
-	if moveResp.From != "e2" {
-		t.Errorf("Expected from 'e2', got '%s'", moveResp.From)
+	// Check the last move in the move history
+	if len(gameResp.MoveHistory) == 0 {
+		t.Errorf("Expected move history to contain at least one move")
+		return
 	}
 
-	if moveResp.To != "e4" {
-		t.Errorf("Expected to 'e4', got '%s'", moveResp.To)
+	lastMove := gameResp.MoveHistory[len(gameResp.MoveHistory)-1]
+	if lastMove.From != "e2" {
+		t.Errorf("Expected from 'e2', got '%s'", lastMove.From)
+	}
+
+	if lastMove.To != "e4" {
+		t.Errorf("Expected to 'e4', got '%s'", lastMove.To)
 	}
 }
 
@@ -177,7 +189,8 @@ func TestInvalidMoveHandling(t *testing.T) {
 
 	server := NewServer(cfg)
 	gin.SetMode(gin.TestMode)
-	router := server.SetupRoutes()
+	router := gin.New()
+	server.SetupRoutes(router)
 
 	// Create a game first
 	createReq := GameCreateRequest{AIColor: "black"}
@@ -228,7 +241,8 @@ func TestGameStateRetrieval(t *testing.T) {
 
 	server := NewServer(cfg)
 	gin.SetMode(gin.TestMode)
-	router := server.SetupRoutes()
+	router := gin.New()
+	server.SetupRoutes(router)
 
 	// Create a game first
 	createReq := GameCreateRequest{AIColor: "black"}
@@ -279,7 +293,8 @@ func TestChatIntegration(t *testing.T) {
 
 	server := NewServer(cfg)
 	gin.SetMode(gin.TestMode)
-	router := server.SetupRoutes()
+	router := gin.New()
+	server.SetupRoutes(router)
 
 	// Create a game first
 	createReq := GameCreateRequest{AIColor: "black"}
@@ -328,10 +343,21 @@ func TestJSONHandling(t *testing.T) {
 
 	server := NewServer(cfg)
 	gin.SetMode(gin.TestMode)
-	router := server.SetupRoutes()
+	router := gin.New()
+	server.SetupRoutes(router)
 
-	// Test invalid JSON
-	req := httptest.NewRequest("POST", "/api/games", bytes.NewBuffer([]byte("{invalid json")))
+	// Test invalid JSON on move endpoint (which requires strict JSON)
+	// First create a game
+	createReq := httptest.NewRequest("POST", "/api/games", nil)
+	createRr := httptest.NewRecorder()
+	router.ServeHTTP(createRr, createReq)
+
+	if createRr.Code != http.StatusCreated {
+		t.Fatalf("Failed to create game for JSON test: %d", createRr.Code)
+	}
+
+	// Now test invalid JSON on move endpoint
+	req := httptest.NewRequest("POST", "/api/games/1/moves", bytes.NewBuffer([]byte("{invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
