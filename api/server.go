@@ -74,13 +74,16 @@ type GameMetadata struct {
 // ChatRequest represents a chat message request.
 type ChatRequest struct {
 	Message  string `json:"message"`
-	Provider string `json:"provider,omitempty"` // LLM provider to use
+	Provider string `json:"provider,omitempty"` // LLM provider to use (openai, anthropic, gemini, xai)
+	APIKey   string `json:"api_key,omitempty"`  // Custom API key for this request
 }
 
-// ChatResponse represents a chat message response.
+// Enhanced ChatResponse represents a chat message response.
 type ChatResponse struct {
-	Response string `json:"response"`
-	Provider string `json:"provider"`
+	Response    string                 `json:"response"`
+	Provider    string                 `json:"provider"`
+	GameContext map[string]interface{} `json:"game_context,omitempty"`
+	Suggestions []string               `json:"suggestions,omitempty"`
 }
 
 // ErrorResponse represents an error response.
@@ -771,13 +774,15 @@ func (s *Server) moveToResponse(move engine.Move) MoveResponse {
 // ReactionRequest represents a request for AI reaction to a move
 type ReactionRequest struct {
 	Move     string `json:"move"`
-	Provider string `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"` // LLM provider to use
+	APIKey   string `json:"api_key,omitempty"`  // Custom API key for this request
 }
 
 // ReactionResponse represents the AI's reaction to a move
 type ReactionResponse struct {
-	Reaction string `json:"reaction"`
-	Provider string `json:"provider"`
+	Reaction    string                 `json:"reaction"`
+	Provider    string                 `json:"provider"`
+	GameContext map[string]interface{} `json:"game_context,omitempty"`
 }
 
 // chatWithAI handles chat requests with the AI
@@ -810,14 +815,26 @@ func (s *Server) chatWithAI(c *gin.Context) {
 		return
 	}
 
-	// Create move context from current game state
+	// Create enhanced move context from current game state
 	var moveContext *chat.MoveContext
 	if game != nil {
 		moveHistory := game.MoveHistory()
 		var lastMoveStr string
+		var capturedPiece string
+
 		if len(moveHistory) > 0 {
 			lastMove := moveHistory[len(moveHistory)-1]
-			lastMoveStr = lastMove.String() // Convert Move to string
+			lastMoveStr = lastMove.String()
+			if !lastMove.Captured.IsEmpty() {
+				capturedPiece = lastMove.Captured.String()
+			}
+		}
+
+		// Get legal moves
+		legalMoves := game.GetAllLegalMoves()
+		legalMoveStrs := make([]string, len(legalMoves))
+		for i, legalMove := range legalMoves {
+			legalMoveStrs[i] = legalMove.String()
 		}
 
 		moveContext = &chat.MoveContext{
@@ -825,7 +842,10 @@ func (s *Server) chatWithAI(c *gin.Context) {
 			MoveCount:     len(moveHistory),
 			CurrentPlayer: game.ActiveColor().String(),
 			GameStatus:    game.Status().String(),
-			Position:      "placeholder-fen", // TODO: Implement FEN if needed
+			Position:      game.ToFEN(), // Use real FEN now
+			LegalMoves:    legalMoveStrs,
+			InCheck:       game.Status() == engine.Check,
+			CapturedPiece: capturedPiece,
 		}
 	}
 
@@ -835,6 +855,8 @@ func (s *Server) chatWithAI(c *gin.Context) {
 		Message:  req.Message,
 		UserID:   "player", // Default user ID
 		MoveData: moveContext,
+		Provider: req.Provider, // Pass through custom provider
+		APIKey:   req.APIKey,   // Pass through custom API key
 	}
 
 	// Generate chat response using the chat service
@@ -847,8 +869,10 @@ func (s *Server) chatWithAI(c *gin.Context) {
 	}
 
 	c.JSON(200, ChatResponse{
-		Response: response.Message,
-		Provider: "go-chatbot", // The provider used by our chat service
+		Response:    response.Message,
+		Provider:    response.Personality, // Use the provider that was actually used
+		GameContext: response.GameContext,
+		Suggestions: response.Suggestions,
 	})
 }
 
@@ -882,35 +906,16 @@ func (s *Server) getAIReaction(c *gin.Context) {
 		return
 	}
 
-	// Parse the move
-	move, err := game.ParseMove(req.Move)
+	// Parse the move to validate it
+	_, err = game.ParseMove(req.Move)
 	if err != nil {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("Invalid move format: %v", err)})
 		return
 	}
 
-	// Create move context for the specific move
-	moveHistory := game.MoveHistory()
-	moveContext := &chat.MoveContext{
-		LastMove:      move.String(),
-		MoveCount:     len(moveHistory),
-		CurrentPlayer: game.ActiveColor().String(),
-		GameStatus:    game.Status().String(),
-		Position:      "placeholder-fen",
-	}
-
-	// Create a request for AI reaction to the specific move
-	reactionMessage := fmt.Sprintf("React to this chess move: %s", req.Move)
-	chatReq := chat.ChatRequest{
-		GameID:   gameID,
-		Message:  reactionMessage,
-		UserID:   "system", // System request for move reaction
-		MoveData: moveContext,
-	}
-
-	// Generate reaction using the chat service
+	// Generate reaction using the enhanced ReactToMove method
 	ctx := context.Background()
-	response, err := s.chatService.Chat(ctx, chatReq)
+	response, err := s.chatService.ReactToMove(ctx, gameID, req.Move, game, req.Provider, req.APIKey)
 	if err != nil {
 		s.logger.Error("Failed to get move reaction", zap.Error(err))
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get AI reaction: %v", err)})
@@ -918,8 +923,9 @@ func (s *Server) getAIReaction(c *gin.Context) {
 	}
 
 	c.JSON(200, ReactionResponse{
-		Reaction: response.Message,
-		Provider: "go-chatbot",
+		Reaction:    response.Message,
+		Provider:    response.Personality,
+		GameContext: response.GameContext,
 	})
 }
 
@@ -941,7 +947,9 @@ func (s *Server) generalChat(c *gin.Context) {
 		GameID:   0, // No game context
 		Message:  req.Message,
 		UserID:   "demo-user",
-		MoveData: nil, // No move context
+		MoveData: nil,          // No move context
+		Provider: req.Provider, // Pass through custom provider
+		APIKey:   req.APIKey,   // Pass through custom API key
 	}
 
 	// Generate response using the chat service
@@ -954,7 +962,9 @@ func (s *Server) generalChat(c *gin.Context) {
 	}
 
 	c.JSON(200, ChatResponse{
-		Response: response.Message,
-		Provider: "go-chatbot",
+		Response:    response.Message,
+		Provider:    response.Personality,
+		GameContext: response.GameContext,
+		Suggestions: response.Suggestions,
 	})
 }

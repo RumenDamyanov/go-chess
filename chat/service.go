@@ -49,6 +49,8 @@ type ChatRequest struct {
 	Message  string       `json:"message"`
 	UserID   string       `json:"user_id,omitempty"`
 	MoveData *MoveContext `json:"move_data,omitempty"`
+	Provider string       `json:"provider,omitempty"` // Override default provider
+	APIKey   string       `json:"api_key,omitempty"`  // Custom API key for this request
 }
 
 // ChatResponse represents a response from the chat service.
@@ -63,11 +65,14 @@ type ChatResponse struct {
 
 // MoveContext provides context about recent moves for the AI.
 type MoveContext struct {
-	LastMove      string `json:"last_move"`
-	MoveCount     int    `json:"move_count"`
-	CurrentPlayer string `json:"current_player"`
-	GameStatus    string `json:"game_status"`
-	Position      string `json:"position"` // FEN notation
+	LastMove      string   `json:"last_move"`
+	MoveCount     int      `json:"move_count"`
+	CurrentPlayer string   `json:"current_player"`
+	GameStatus    string   `json:"game_status"`
+	Position      string   `json:"position"`                 // FEN notation
+	LegalMoves    []string `json:"legal_moves"`              // Available legal moves
+	InCheck       bool     `json:"in_check"`                 // Whether current player is in check
+	CapturedPiece string   `json:"captured_piece,omitempty"` // Last captured piece
 }
 
 // NewChatService creates a new chat service instance.
@@ -178,6 +183,61 @@ Avoid:
 	return service, nil
 }
 
+// createCustomChatbot creates a chatbot instance with custom API key and provider.
+func (cs *ChatService) createCustomChatbot(provider, apiKey string) (*gochatbot.Chatbot, error) {
+	if provider == "" {
+		return nil, fmt.Errorf("provider is required")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+
+	// Create custom configuration
+	cfg := &config.Config{
+		Model:  provider,
+		Prompt: cs.config.Prompt, // Use same prompt as default
+	}
+
+	// Set API key based on provider
+	switch strings.ToLower(provider) {
+	case "openai":
+		cfg.OpenAI = config.OpenAIConfig{
+			APIKey: apiKey,
+			Model:  "gpt-4o-mini",
+		}
+	case "anthropic":
+		cfg.Anthropic = config.AnthropicConfig{
+			APIKey: apiKey,
+			Model:  "claude-3-haiku-20240307",
+		}
+	case "gemini":
+		cfg.Gemini = config.GeminiConfig{
+			APIKey: apiKey,
+			Model:  "gemini-1.5-flash",
+		}
+	case "xai":
+		cfg.XAI = config.XAIConfig{
+			APIKey: apiKey,
+			Model:  "grok-1.5",
+		}
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
+
+	// Create model and chatbot
+	model, err := models.NewFromConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create custom model: %w", err)
+	}
+
+	chatbot, err := gochatbot.New(cfg, gochatbot.WithModel(model))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create custom chatbot: %w", err)
+	}
+
+	return chatbot, nil
+}
+
 // StartConversation creates a new conversation for a game.
 func (cs *ChatService) StartConversation(gameID int) *Conversation {
 	conversation := &Conversation{
@@ -212,8 +272,15 @@ func (cs *ChatService) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 	// Build context for AI
 	contextualMessage := cs.buildContextualMessage(req.Message, conversation, req.MoveData)
 
+	// Get chatbot instance (custom or default)
+	chatbot, err := cs.createCustomChatbot(req.Provider, req.APIKey)
+	if err != nil {
+		cs.logger.Error("Failed to create custom chatbot", zap.Error(err))
+		chatbot = cs.chatbot // Fallback to default
+	}
+
 	// Get AI response
-	response, err := cs.chatbot.Ask(ctx, contextualMessage)
+	response, err := chatbot.Ask(ctx, contextualMessage)
 	if err != nil {
 		cs.logger.Error("Failed to get AI response", zap.Error(err))
 		return nil, fmt.Errorf("failed to get AI response: %w", err)
@@ -239,27 +306,42 @@ func (cs *ChatService) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 }
 
 // ReactToMove generates an AI reaction to a chess move.
-func (cs *ChatService) ReactToMove(ctx context.Context, gameID int, move string, gameState *engine.Game) (*ChatResponse, error) {
+func (cs *ChatService) ReactToMove(ctx context.Context, gameID int, move string, gameState *engine.Game, provider, apiKey string) (*ChatResponse, error) {
 	// Get or create conversation
 	conversation, exists := cs.conversations[gameID]
 	if !exists {
 		conversation = cs.StartConversation(gameID)
 	}
 
-	// Build move context
+	// Build enhanced move context
+	legalMoves := gameState.GetAllLegalMoves()
+	legalMoveStrs := make([]string, len(legalMoves))
+	for i, legalMove := range legalMoves {
+		legalMoveStrs[i] = legalMove.String()
+	}
+
 	moveData := &MoveContext{
 		LastMove:      move,
 		MoveCount:     len(gameState.MoveHistory()),
 		CurrentPlayer: gameState.ActiveColor().String(),
 		GameStatus:    gameState.Status().String(),
-		Position:      "placeholder-fen", // TODO: Implement FEN export if needed
+		Position:      gameState.ToFEN(), // Use real FEN
+		LegalMoves:    legalMoveStrs,
+		InCheck:       gameState.Status() == engine.Check,
 	}
 
 	// Generate contextual reaction prompt
 	reactionPrompt := cs.buildMoveReactionPrompt(move, moveData)
 
+	// Get chatbot instance (custom or default)
+	chatbot, err := cs.createCustomChatbot(provider, apiKey)
+	if err != nil {
+		cs.logger.Error("Failed to create custom chatbot", zap.Error(err))
+		chatbot = cs.chatbot // Fallback to default
+	}
+
 	// Get AI reaction
-	reaction, err := cs.chatbot.Ask(ctx, reactionPrompt)
+	reaction, err := chatbot.Ask(ctx, reactionPrompt)
 	if err != nil {
 		cs.logger.Error("Failed to get AI reaction", zap.Error(err))
 		return nil, fmt.Errorf("failed to get AI reaction: %w", err)
@@ -465,12 +547,38 @@ func (cs *ChatService) buildGameContext(moveData *MoveContext) map[string]interf
 		return nil
 	}
 
-	return map[string]interface{}{
+	context := map[string]interface{}{
 		"move_count":     moveData.MoveCount,
 		"current_player": moveData.CurrentPlayer,
 		"game_status":    moveData.GameStatus,
 		"game_phase":     cs.determineGamePhase(moveData.MoveCount),
+		"position_fen":   moveData.Position,
 	}
+
+	// Add optional fields if available
+	if moveData.LastMove != "" {
+		context["last_move"] = moveData.LastMove
+	}
+	if len(moveData.LegalMoves) > 0 {
+		context["legal_moves_count"] = len(moveData.LegalMoves)
+		context["sample_legal_moves"] = moveData.LegalMoves[:min(5, len(moveData.LegalMoves))] // Show first 5 moves
+	}
+	if moveData.InCheck {
+		context["in_check"] = true
+	}
+	if moveData.CapturedPiece != "" {
+		context["captured_piece"] = moveData.CapturedPiece
+	}
+
+	return context
+}
+
+// Helper function for min
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (cs *ChatService) determineGamePhase(moveCount int) string {

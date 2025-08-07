@@ -651,7 +651,6 @@ func (g *Game) isInCheck(color Color) bool {
 		opponentColor = Black
 	}
 
-
 	// Check all opponent pieces to see if they can attack the king
 	for sq := Square(0); sq < 64; sq++ {
 		piece := g.board.GetPiece(sq)
@@ -1037,6 +1036,106 @@ func (g *Game) updateGameStatus() {
 			g.status = InProgress
 		}
 	}
+}
+
+// ToFEN converts the current game position to FEN (Forsyth-Edwards Notation).
+func (g *Game) ToFEN() string {
+	var fen strings.Builder
+
+	// 1. Piece placement
+	for rank := 7; rank >= 0; rank-- {
+		emptyCount := 0
+		for file := 0; file < 8; file++ {
+			square := Square(rank*8 + file)
+			piece := g.board.GetPiece(square)
+
+			if piece.IsEmpty() {
+				emptyCount++
+			} else {
+				if emptyCount > 0 {
+					fen.WriteString(fmt.Sprintf("%d", emptyCount))
+					emptyCount = 0
+				}
+				fen.WriteString(g.pieceToFENChar(piece))
+			}
+		}
+		if emptyCount > 0 {
+			fen.WriteString(fmt.Sprintf("%d", emptyCount))
+		}
+		if rank > 0 {
+			fen.WriteString("/")
+		}
+	}
+
+	// 2. Active color
+	fen.WriteString(" ")
+	if g.activeColor == White {
+		fen.WriteString("w")
+	} else {
+		fen.WriteString("b")
+	}
+
+	// 3. Castling rights
+	fen.WriteString(" ")
+	castling := ""
+	if g.castlingRights.WhiteKingside {
+		castling += "K"
+	}
+	if g.castlingRights.WhiteQueenside {
+		castling += "Q"
+	}
+	if g.castlingRights.BlackKingside {
+		castling += "k"
+	}
+	if g.castlingRights.BlackQueenside {
+		castling += "q"
+	}
+	if castling == "" {
+		castling = "-"
+	}
+	fen.WriteString(castling)
+
+	// 4. En passant square
+	fen.WriteString(" ")
+	if g.enPassantSquare == -1 {
+		fen.WriteString("-")
+	} else {
+		fen.WriteString(g.enPassantSquare.String())
+	}
+
+	// 5. Half-move clock
+	fen.WriteString(fmt.Sprintf(" %d", g.halfMoveClock))
+
+	// 6. Full-move number
+	fen.WriteString(fmt.Sprintf(" %d", g.moveCount))
+
+	return fen.String()
+}
+
+// pieceToFENChar converts a piece to its FEN character representation.
+func (g *Game) pieceToFENChar(piece Piece) string {
+	var char string
+	switch piece.Type {
+	case Pawn:
+		char = "p"
+	case Rook:
+		char = "r"
+	case Knight:
+		char = "n"
+	case Bishop:
+		char = "b"
+	case Queen:
+		char = "q"
+	case King:
+		char = "k"
+	default:
+		return ""
+	}
+
+	if piece.Color == White {
+		return strings.ToUpper(char)
+	}
+	return char
 }
 
 func (g *Game) copy() *Game {
