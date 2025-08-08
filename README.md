@@ -4,8 +4,8 @@
 [![CodeQL](https://github.com/rumendamyanov/go-chess/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/rumendamyanov/go-chess/actions/workflows/github-code-scanning/codeql)
 [![Dependabot](https://github.com/rumendamyanov/go-chess/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/rumendamyanov/go-chess/actions/workflows/dependabot/dependabot-updates)
 [![codecov](https://codecov.io/gh/rumendamyanov/go-chess/graph/badge.svg)](https://codecov.io/gh/rumendamyanov/go-chess)
-[![Go Report Card](https://goreportcard.com/badge/github.com/rumendamyanov/go-chess?5)](https://goreportcard.com/report/github.com/rumendamyanov/go-chess)
-[![Go Reference](https://pkg.go.dev/badge/github.com/rumendamyanov/go-chess.svg)](https://pkg.go.dev/github.com/rumendamyanov/go-chess)
+[![Go Report Card](https://goreportcard.com/badge/go.rumenx.com/chess?5)](https://goreportcard.com/report/go.rumenx.com/chess)
+[![Go Reference](https://pkg.go.dev/badge/go.rumenx.com/chess.svg)](https://pkg.go.dev/go.rumenx.com/chess)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/rumendamyanov/go-chess/blob/master/LICENSE.md)
 
 > 📖 **Documentation**: [📚 Complete Wiki](https://github.com/RumenDamyanov/go-chess/wiki) · [🚀 Quick Start](https://github.com/RumenDamyanov/go-chess/wiki/Quick-Start-Guide) · [📋 API Reference](https://github.com/RumenDamyanov/go-chess/wiki/API-Reference) · [🤖 LLM AI Guide](https://github.com/RumenDamyanov/go-chess/wiki/LLM-AI-Guide)
@@ -183,7 +183,7 @@ go-chess/
 ## 🛠️ Technical Stack
 
 - **Language**: Go 1.23+ (latest features and performance improvements)
-- **LLM Integration**: [go-chatbot](https://github.com/RumenDamyanov/go-chatbot) v1.0.1 with multi-provider support
+- **LLM Integration**: [go-chatbot](https://github.com/RumenDamyanov/go-chatbot) v1.0.2 with multi-provider support
 - **Containerization**: Docker with multi-stage builds and security hardening
 - **Orchestration**: Docker Compose with health checks and auto-restart
 - **Web Framework**: Gin (HTTP API)
@@ -197,7 +197,7 @@ go-chess/
 ## Installation
 
 ```bash
-go get github.com/rumendamyanov/go-chess
+go get go.rumenx.com/chess
 ```
 
 ## 🐳 Docker Support
@@ -523,7 +523,7 @@ r.GET("/ws/games/:id", wsHandler.HandleGameConnection)
 ### AI Configuration
 
 ```go
-import "github.com/rumendamyanov/go-chess/ai"
+import "go.rumenx.com/chess/ai"
 
 // Configure different AI engines
 engines := map[string]ai.Engine{

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rumendamyanov/go-chess/config"
+	"go.rumenx.com/chess/config"
 )
 
 func TestServerInitialization(t *testing.T) {

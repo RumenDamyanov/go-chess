@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rumendamyanov/go-chess/engine"
+	"go.rumenx.com/chess/engine"
 )
 
 func TestLLMAIEngineCreation(t *testing.T) {

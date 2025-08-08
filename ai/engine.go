@@ -8,7 +8,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/rumendamyanov/go-chess/engine"
+	"go.rumenx.com/chess/engine"
 )
 
 // Difficulty represents the difficulty level of an AI opponent.
