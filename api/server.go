@@ -15,10 +15,10 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
-	"github.com/rumendamyanov/go-chess/ai"
-	"github.com/rumendamyanov/go-chess/chat"
-	"github.com/rumendamyanov/go-chess/config"
-	"github.com/rumendamyanov/go-chess/engine"
+	"go.rumenx.com/chess/ai"
+	"go.rumenx.com/chess/chat"
+	"go.rumenx.com/chess/config"
+	"go.rumenx.com/chess/engine"
 )
 
 // GameResponse represents a game in API responses.

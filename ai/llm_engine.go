@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rumendamyanov/go-chess/engine"
+	"go.rumenx.com/chess/engine"
 )
 
 // LLMProvider represents the supported LLM providers.

@@ -4,8 +4,8 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rumendamyanov/go-chess/api"
-	"github.com/rumendamyanov/go-chess/config"
+	"go.rumenx.com/chess/api"
+	"go.rumenx.com/chess/config"
 )
 
 func main() {

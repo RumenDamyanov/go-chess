@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/rumendamyanov/go-chess/ai"
-	"github.com/rumendamyanov/go-chess/engine"
+	"go.rumenx.com/chess/ai"
+	"go.rumenx.com/chess/engine"
 )
 
 func main() {

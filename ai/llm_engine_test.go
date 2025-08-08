@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rumendamyanov/go-chess/engine"
+	"go.rumenx.com/chess/engine"
 )
 
 func TestNewLLMAIEngine(t *testing.T) {

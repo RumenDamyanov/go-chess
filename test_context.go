@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/rumendamyanov/go-chess/engine"
+	"go.rumenx.com/chess/engine"
 )
 
 func main() {

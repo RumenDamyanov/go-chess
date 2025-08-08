@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	gochatbot "github.com/RumenDamyanov/go-chatbot"
-	"github.com/RumenDamyanov/go-chatbot/config"
-	"github.com/RumenDamyanov/go-chatbot/models"
-	"github.com/rumendamyanov/go-chess/engine"
+	gochatbot "go.rumenx.com/chatbot"
+	"go.rumenx.com/chatbot/config"
+	"go.rumenx.com/chatbot/models"
+	"go.rumenx.com/chess/engine"
 	"go.uber.org/zap"
 )
 
