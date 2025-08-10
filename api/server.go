@@ -28,6 +28,7 @@ type GameResponse struct {
 	ActiveColor string         `json:"active_color"`
 	AIColor     string         `json:"ai_color,omitempty"` // Which color the AI plays
 	Board       string         `json:"board"`
+	FEN         string         `json:"fen"` // Current position in FEN
 	MoveCount   int            `json:"move_count"`
 	MoveHistory []MoveResponse `json:"move_history"`
 	CreatedAt   time.Time      `json:"created_at"`
@@ -52,7 +53,6 @@ type MoveRequest struct {
 	Notation  string `json:"notation,omitempty"`
 }
 
-// AIRequest represents an AI move request.
 // AIRequest represents an AI move request.
 type AIRequest struct {
 	Level    string `json:"level"`    // beginner, easy, medium, hard, expert
@@ -92,8 +92,7 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-// Server represents the chess API server.
-// Server represents the HTTP API server.
+// Server represents the HTTP API server (stateful per-process in-memory store).
 type Server struct {
 	config       *config.Config
 	logger       *zap.Logger
@@ -103,6 +102,7 @@ type Server struct {
 	nextID       int
 	upgrader     websocket.Upgrader
 	chatService  *chat.ChatService
+	gameLocks    map[int]*sync.Mutex // per-game locks to avoid concurrent mutation races
 }
 
 // NewServer creates a new API server.
@@ -123,6 +123,7 @@ func NewServer(cfg *config.Config) *Server {
 		gameMetadata: make(map[int]*GameMetadata),
 		nextID:       1,
 		chatService:  chatService,
+		gameLocks:    make(map[int]*sync.Mutex),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins for demo purposes
@@ -166,10 +167,11 @@ func (s *Server) SetupRoutes(r *gin.Engine) {
 		api.POST("/games/:id/react", s.getAIReaction)
 		api.POST("/chat", s.generalChat) // General chat for demos
 
-		// Game analysis
+		// Game analysis / export
 		api.GET("/games/:id/legal-moves", s.getLegalMoves)
 		api.POST("/games/:id/fen", s.loadFromFEN)
 		api.GET("/games/:id/analysis", s.analyzePosition)
+		api.GET("/games/:id/pgn", s.getPGN)
 	}
 
 	// WebSocket endpoint
@@ -187,8 +189,8 @@ func (s *Server) createGame(c *gin.Context) {
 	// Parse request body for AI color preference
 	var req GameCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		// If no body or invalid JSON, use defaults
-		req.AIColor = "black" // Default: AI plays black
+		// If no body or invalid JSON, fall back to default AI color.
+		req.AIColor = "black"
 	}
 
 	// Validate AI color
@@ -204,6 +206,11 @@ func (s *Server) createGame(c *gin.Context) {
 	s.gameMetadata[gameID] = &GameMetadata{
 		AIColor:   req.AIColor,
 		CreatedAt: time.Now(),
+	}
+
+	// initialize per-game lock
+	if s.gameLocks[gameID] == nil {
+		s.gameLocks[gameID] = &sync.Mutex{}
 	}
 
 	response := s.gameToResponse(gameID, game)
@@ -252,6 +259,7 @@ func (s *Server) deleteGame(c *gin.Context) {
 	}
 
 	delete(s.games, gameID)
+	delete(s.gameLocks, gameID)
 
 	s.logger.Info("Deleted game", zap.Int("game_id", gameID))
 	c.JSON(http.StatusNoContent, nil)
@@ -287,16 +295,24 @@ func (s *Server) makeMove(c *gin.Context) {
 		return
 	}
 
-	s.gamesMux.Lock()
+	// Get game reference under read lock
+	s.gamesMux.RLock()
 	game, exists := s.games[gameID]
-	s.gamesMux.Unlock()
+	lock := s.gameLocks[gameID]
+	s.gamesMux.RUnlock()
 
 	if !exists {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "game_not_found"})
 		return
 	}
 
-	// Parse the move
+	// Serialize mutations for this specific game to prevent race conditions
+	if lock != nil {
+		lock.Lock()
+		defer lock.Unlock()
+	}
+
+	// Parse the move (notation may be provided directly e.g. for castling)
 	var notation string
 	if req.Notation != "" {
 		// Use provided notation (for castling moves like "O-O")
@@ -374,6 +390,7 @@ func (s *Server) getAIMove(c *gin.Context) {
 	s.gamesMux.RLock()
 	game, gameExists := s.games[gameID]
 	metadata, metadataExists := s.gameMetadata[gameID]
+	lock := s.gameLocks[gameID]
 	s.gamesMux.RUnlock()
 
 	if !gameExists {
@@ -440,13 +457,17 @@ func (s *Server) getAIMove(c *gin.Context) {
 
 	aiEngine.SetDifficulty(difficulty)
 
-	// Set timeout
-	timeout := 30 * time.Second
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Bounded thinking time for AI computation.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Get AI move
+	// Serialize AI engine computation + potential future game mutation scope
+	if lock != nil {
+		lock.Lock()
+		defer lock.Unlock()
+	}
+
+	// Get AI move (does not yet modify the game; separate call to makeMove endpoint will)
 	move, err := aiEngine.GetBestMove(ctx, game)
 	if err != nil {
 		s.logger.Error("AI move generation failed", zap.Error(err))
@@ -457,12 +478,39 @@ func (s *Server) getAIMove(c *gin.Context) {
 	// Convert move to response format
 	moveResp := s.moveToResponse(move)
 
+	// Current position evaluation (before move)
+	evalCp := game.Evaluate()
+	eval := float64(evalCp) / 100.0
+
+	// Evaluate position after suggested move via FEN reconstruction (avoids needing unexported copy())
+	var evalAfterCp int
+	var evalAfter float64
+	fen := game.ToFEN()
+	tmp := engine.NewGame()
+	if err := tmp.ParseFEN(fen); err == nil {
+		if parsed, err2 := tmp.ParseMove(move.String()); err2 == nil {
+			if err3 := tmp.MakeMove(parsed); err3 == nil {
+				evalAfterCp = tmp.Evaluate()
+				evalAfter = float64(evalAfterCp) / 100.0
+			}
+		}
+	}
+
+	evalDiffCp := evalAfterCp - evalCp
+	evalDiff := float64(evalDiffCp) / 100.0
+
 	c.JSON(http.StatusOK, map[string]interface{}{
-		"move":     moveResp,
-		"notation": move.String(),
-		"level":    req.Level,
-		"engine":   req.Engine,
-		"provider": req.Provider,
+		"move":                moveResp,
+		"notation":            move.String(),
+		"level":               req.Level,
+		"engine":              req.Engine,
+		"provider":            req.Provider,
+		"evaluation":          eval,
+		"evaluation_cp":       evalCp,
+		"evaluation_after":    evalAfter,
+		"evaluation_after_cp": evalAfterCp,
+		"evaluation_diff":     evalDiff,
+		"evaluation_diff_cp":  evalDiffCp,
 	})
 }
 
@@ -482,6 +530,7 @@ func (s *Server) getAIHint(c *gin.Context) {
 
 	s.gamesMux.RLock()
 	game, exists := s.games[gameID]
+	lock := s.gameLocks[gameID]
 	s.gamesMux.RUnlock()
 
 	if !exists {
@@ -533,25 +582,59 @@ func (s *Server) getAIHint(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	bestMove, err := aiEngine.GetBestMove(ctx, game)
-	if err != nil {
-		// Fallback to a random legal move if AI engine fails
-		legalMoves := game.GetAllLegalMoves()
-		if len(legalMoves) == 0 {
-			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "no_legal_moves"})
-			return
-		}
-		moveIndex := int(time.Now().UnixNano()) % len(legalMoves)
-		bestMove = legalMoves[moveIndex]
+	var bestMove engine.Move
+	if lock != nil {
+		lock.Lock()
 	}
+	bestMove, err = aiEngine.GetBestMove(ctx, game)
+	if lock != nil {
+		lock.Unlock()
+	}
+	if err != nil {
+		// Fallback: instead of pseudo-random time-based move (non-deterministic), return explicit no-hint
+		c.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"error":         "hint_unavailable",
+			"message":       "AI engine could not produce a hint at this time",
+			"level":         req.Level,
+			"engine":        req.Engine,
+			"deterministic": true,
+		})
+		return
+	}
+
+	// Evaluate current position and after-move position
+	currentEvalCp := game.Evaluate()
+	currentEval := float64(currentEvalCp) / 100.0
+
+	var afterEvalCp int
+	var afterEval float64
+	fen := game.ToFEN()
+	tmp := engine.NewGame()
+	if err := tmp.ParseFEN(fen); err == nil {
+		if parsed, err2 := tmp.ParseMove(bestMove.String()); err2 == nil {
+			if err3 := tmp.MakeMove(parsed); err3 == nil {
+				afterEvalCp = tmp.Evaluate()
+				afterEval = float64(afterEvalCp) / 100.0
+			}
+		}
+	}
+
+	evalDiffCp := afterEvalCp - currentEvalCp
+	evalDiff := float64(evalDiffCp) / 100.0
 
 	// Return the hint without making the move
 	hintResponse := map[string]interface{}{
-		"from":        bestMove.From.String(),
-		"to":          bestMove.To.String(),
-		"explanation": fmt.Sprintf("AI suggests moving from %s to %s", bestMove.From.String(), bestMove.To.String()),
-		"level":       req.Level,
-		"engine":      req.Engine,
+		"from":                bestMove.From.String(),
+		"to":                  bestMove.To.String(),
+		"explanation":         fmt.Sprintf("AI suggests moving from %s to %s", bestMove.From.String(), bestMove.To.String()),
+		"level":               req.Level,
+		"engine":              req.Engine,
+		"evaluation":          currentEval,
+		"evaluation_cp":       currentEvalCp,
+		"evaluation_after":    afterEval,
+		"evaluation_after_cp": afterEvalCp,
+		"evaluation_diff":     evalDiff,
+		"evaluation_diff_cp":  evalDiffCp,
 	}
 
 	c.JSON(http.StatusOK, hintResponse)
@@ -611,17 +694,32 @@ func (s *Server) loadFromFEN(c *gin.Context) {
 		return
 	}
 
-	s.gamesMux.Lock()
-	_, exists := s.games[gameID]
-	s.gamesMux.Unlock()
+	// Get game reference & lock
+	s.gamesMux.RLock()
+	game, exists := s.games[gameID]
+	lock := s.gameLocks[gameID]
+	s.gamesMux.RUnlock()
 
 	if !exists {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "game_not_found"})
 		return
 	}
 
-	// TODO: Implement FEN loading
-	c.JSON(http.StatusNotImplemented, ErrorResponse{Error: "not_implemented", Message: "FEN loading not yet implemented"})
+	if lock != nil {
+		lock.Lock()
+	}
+	err = game.ParseFEN(req.FEN)
+	if lock != nil {
+		lock.Unlock()
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid_fen", Message: err.Error()})
+		return
+	}
+
+	// Return updated game state
+	response := s.gameToResponse(gameID, game)
+	c.JSON(http.StatusOK, response)
 }
 
 // analyzePosition analyzes the current position.
@@ -641,15 +739,145 @@ func (s *Server) analyzePosition(c *gin.Context) {
 		return
 	}
 
-	// Basic position analysis
+	// Basic position analysis + material & mobility
+	evalCp := game.Evaluate() // centipawns from White perspective
+	eval := float64(evalCp) / 100.0
+
+	// Material breakdown
+	type counts struct{ P, R, N, B, Q int }
+	white := counts{}
+	black := counts{}
+	board := game.Board()
+	for sq := 0; sq < 64; sq++ {
+		p := board.GetPiece(engine.Square(sq))
+		if p.IsEmpty() {
+			continue
+		}
+		target := &white
+		if p.Color == engine.Black {
+			target = &black
+		}
+		switch p.Type {
+		case engine.Pawn:
+			target.P++
+		case engine.Rook:
+			target.R++
+		case engine.Knight:
+			target.N++
+		case engine.Bishop:
+			target.B++
+		case engine.Queen:
+			target.Q++
+		}
+	}
+
+	// Mobility: number of legal moves for side to move
+	mobility := len(game.GetAllLegalMoves())
+
 	analysis := map[string]interface{}{
-		"status":       game.Status().String(),
-		"active_color": game.ActiveColor().String(),
-		"move_count":   game.MoveCount(),
-		"evaluation":   0.0, // TODO: Implement position evaluation
+		"status":        game.Status().String(),
+		"active_color":  game.ActiveColor().String(),
+		"move_count":    game.MoveCount(),
+		"evaluation":    eval,
+		"evaluation_cp": evalCp,
+		"material": map[string]interface{}{
+			"white": white,
+			"black": black,
+		},
+		"mobility": mobility,
 	}
 
 	c.JSON(http.StatusOK, analysis)
+}
+
+// getPGN exports the game in PGN format.
+func (s *Server) getPGN(c *gin.Context) {
+	gameID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid_game_id"})
+		return
+	}
+
+	s.gamesMux.RLock()
+	game, exists := s.games[gameID]
+	metadata := s.gameMetadata[gameID]
+	s.gamesMux.RUnlock()
+	if !exists {
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "game_not_found"})
+		return
+	}
+
+	// Basic Seven Tag Roster + optional SetUp/FEN if non-initial
+	created := time.Now().UTC()
+	if metadata != nil {
+		created = metadata.CreatedAt
+	}
+	dateStr := created.Format("2006.01.02")
+
+	// Determine result string
+	result := pgnResultString(game)
+
+	// Detect non-initial starting position using internal flag
+	gameFEN := game.ToFEN()
+	nonInitial := game.StartedFromFEN()
+
+	// Determine player names based on AI color
+	whiteName := "Player"
+	blackName := "AI"
+	if metadata != nil && metadata.AIColor == "white" {
+		whiteName = "AI"
+		blackName = "Player"
+	}
+
+	tags := []string{
+		"[Event \"Casual Game\"]",
+		"[Site \"Localhost\"]",
+		fmt.Sprintf("[Date \"%s\"]", dateStr),
+		"[Round \"-\"]",
+		fmt.Sprintf("[White \"%s\"]", whiteName),
+		fmt.Sprintf("[Black \"%s\"]", blackName),
+		fmt.Sprintf("[Result \"%s\"]", result),
+		"[Variant \"Standard\"]",
+		"[Annotator \"js-chess\"]",
+	}
+	if nonInitial {
+		tags = append(tags, "[SetUp \"1\"]")
+		tags = append(tags, fmt.Sprintf("[FEN \"%s\"]", gameFEN))
+	}
+
+	// Build movetext using SAN
+	sanMoves := game.GenerateSAN()
+	var movetext string
+	for i, san := range sanMoves {
+		if i%2 == 0 { // white move number
+			movetext += fmt.Sprintf("%d. ", (i/2)+1)
+		}
+		movetext += san + " "
+	}
+	movetext += result
+
+	pgn := ""
+	for _, t := range tags {
+		pgn += t + "\n"
+	}
+	pgn += "\n" + movetext + "\n"
+
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	c.String(http.StatusOK, pgn)
+}
+
+// pgnResultString maps internal status to PGN termination markers.
+func pgnResultString(game *engine.Game) string {
+	switch game.Status() {
+	case engine.WhiteWins:
+		return "1-0"
+	case engine.BlackWins:
+		return "0-1"
+	case engine.Draw:
+		return "1/2-1/2"
+	default:
+		return "*" // in progress or check
+	}
 }
 
 // handleWebSocket handles WebSocket connections for real-time game updates.
@@ -702,15 +930,19 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 }
 
 // health returns the health status of the API.
+// APIVersion is returned by the health endpoint and bumped per release.
+const APIVersion = "1.0.5"
+
 func (s *Server) health(c *gin.Context) {
 	s.gamesMux.RLock()
 	gameCount := len(s.games)
 	s.gamesMux.RUnlock()
 
+	// NOTE: Update version when releasing; aligns with root project Option A tasks
 	c.JSON(http.StatusOK, map[string]interface{}{
 		"status":     "healthy",
 		"timestamp":  time.Now().UTC(),
-		"version":    "1.0.0",
+		"version":    APIVersion,
 		"game_count": gameCount,
 	})
 }
@@ -744,6 +976,7 @@ func (s *Server) gameToResponse(id int, game *engine.Game) GameResponse {
 		ActiveColor: game.ActiveColor().String(),
 		AIColor:     aiColor,
 		Board:       game.Board().String(),
+		FEN:         game.ToFEN(),
 		MoveCount:   game.MoveCount(),
 		MoveHistory: moves,
 		CreatedAt:   createdAt,
@@ -790,13 +1023,13 @@ func (s *Server) chatWithAI(c *gin.Context) {
 	gameIDStr := c.Param("id")
 	gameID, err := strconv.Atoi(gameIDStr)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid game ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid game ID"})
 		return
 	}
 
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
@@ -805,13 +1038,13 @@ func (s *Server) chatWithAI(c *gin.Context) {
 	s.gamesMux.RUnlock()
 
 	if !exists {
-		c.JSON(404, gin.H{"error": "Game not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Game not found"})
 		return
 	}
 
 	// Check if chat service is available
 	if s.chatService == nil {
-		c.JSON(503, gin.H{"error": "Chat service unavailable"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Chat service unavailable"})
 		return
 	}
 
@@ -864,7 +1097,7 @@ func (s *Server) chatWithAI(c *gin.Context) {
 	response, err := s.chatService.Chat(ctx, chatReq)
 	if err != nil {
 		s.logger.Error("Failed to get chat response", zap.Error(err))
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get AI response: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get AI response: %v", err)})
 		return
 	}
 
@@ -881,13 +1114,13 @@ func (s *Server) getAIReaction(c *gin.Context) {
 	gameIDStr := c.Param("id")
 	gameID, err := strconv.Atoi(gameIDStr)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid game ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid game ID"})
 		return
 	}
 
 	var req ReactionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
@@ -896,20 +1129,20 @@ func (s *Server) getAIReaction(c *gin.Context) {
 	s.gamesMux.RUnlock()
 
 	if !exists {
-		c.JSON(404, gin.H{"error": "Game not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Game not found"})
 		return
 	}
 
 	// Check if chat service is available
 	if s.chatService == nil {
-		c.JSON(503, gin.H{"error": "Chat service unavailable"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Chat service unavailable"})
 		return
 	}
 
 	// Parse the move to validate it
 	_, err = game.ParseMove(req.Move)
 	if err != nil {
-		c.JSON(400, gin.H{"error": fmt.Sprintf("Invalid move format: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid move format: %v", err)})
 		return
 	}
 
@@ -918,7 +1151,7 @@ func (s *Server) getAIReaction(c *gin.Context) {
 	response, err := s.chatService.ReactToMove(ctx, gameID, req.Move, game, req.Provider, req.APIKey)
 	if err != nil {
 		s.logger.Error("Failed to get move reaction", zap.Error(err))
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get AI reaction: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get AI reaction: %v", err)})
 		return
 	}
 
@@ -932,13 +1165,13 @@ func (s *Server) getAIReaction(c *gin.Context) {
 // generalChat handles general chat messages without game context
 func (s *Server) generalChat(c *gin.Context) {
 	if s.chatService == nil {
-		c.JSON(500, gin.H{"error": "Chat service not available"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Chat service not available"})
 		return
 	}
 
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
@@ -957,7 +1190,7 @@ func (s *Server) generalChat(c *gin.Context) {
 	response, err := s.chatService.Chat(ctx, chatReq)
 	if err != nil {
 		s.logger.Error("Failed to get chat response", zap.Error(err))
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get AI response: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get AI response: %v", err)})
 		return
 	}
 

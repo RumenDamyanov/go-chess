@@ -47,9 +47,20 @@ test:
 	$(GOTEST) -v ./...
 
 # Run tests with coverage
+PKGS_EXCL_EXAMPLES := $(shell go list ./... | grep -v "/examples/")
+
 test-coverage:
+	@echo "Running coverage excluding examples..."
+	$(GOTEST) -race -coverprofile=coverage.out $(PKGS_EXCL_EXAMPLES)
+	$(GOCMD) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage (excluding examples):" && $(GOCMD) tool cover -func=coverage.out | tail -n 1
+
+# Original behavior including examples retained for reference
+test-coverage-all:
+	@echo "Running coverage including examples..."
 	$(GOTEST) -race -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage (including examples):" && $(GOCMD) tool cover -func=coverage.out | tail -n 1
 
 # Run benchmarks
 bench:
