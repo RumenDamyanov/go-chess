@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	gochatbot "go.rumenx.com/chatbot"
@@ -17,12 +18,25 @@ import (
 	"go.uber.org/zap"
 )
 
+// ChatbotClient is a minimal interface the underlying chatbot must satisfy.
+type ChatbotClient interface {
+	Ask(ctx context.Context, prompt string) (string, error)
+}
+
+// chatbotAdapter wraps the underlying gochatbot.Chatbot to satisfy ChatbotClient.
+type chatbotAdapter struct{ base *gochatbot.Chatbot }
+
+func (a *chatbotAdapter) Ask(ctx context.Context, prompt string) (string, error) {
+	return a.base.Ask(ctx, prompt)
+}
+
 // ChatService represents the chess AI chatbot service.
 type ChatService struct {
-	chatbot       *gochatbot.Chatbot
+	chatbot       ChatbotClient
 	config        *config.Config
 	logger        *zap.Logger
 	conversations map[int]*Conversation // gameID -> conversation
+	mu            sync.RWMutex
 }
 
 // Conversation represents a chat conversation for a specific game.
@@ -173,7 +187,7 @@ Avoid:
 	}
 
 	service := &ChatService{
-		chatbot:       chatbot,
+		chatbot:       &chatbotAdapter{base: chatbot},
 		config:        cfg,
 		logger:        logger,
 		conversations: make(map[int]*Conversation),
@@ -184,7 +198,7 @@ Avoid:
 }
 
 // createCustomChatbot creates a chatbot instance with custom API key and provider.
-func (cs *ChatService) createCustomChatbot(provider, apiKey string) (*gochatbot.Chatbot, error) {
+func (cs *ChatService) createCustomChatbot(provider, apiKey string) (ChatbotClient, error) {
 	if provider == "" {
 		return nil, fmt.Errorf("provider is required")
 	}
@@ -235,11 +249,12 @@ func (cs *ChatService) createCustomChatbot(provider, apiKey string) (*gochatbot.
 		return nil, fmt.Errorf("failed to create custom chatbot: %w", err)
 	}
 
-	return chatbot, nil
+	return &chatbotAdapter{base: chatbot}, nil
 }
 
 // StartConversation creates a new conversation for a game.
 func (cs *ChatService) StartConversation(gameID int) *Conversation {
+	cs.mu.Lock()
 	conversation := &Conversation{
 		GameID:    gameID,
 		Messages:  make([]Message, 0),
@@ -249,6 +264,7 @@ func (cs *ChatService) StartConversation(gameID int) *Conversation {
 	}
 
 	cs.conversations[gameID] = conversation
+	cs.mu.Unlock()
 
 	// Add welcome message
 	welcomeMsg := cs.generateWelcomeMessage()
@@ -364,12 +380,16 @@ func (cs *ChatService) ReactToMove(ctx context.Context, gameID int, move string,
 
 // GetConversation returns the conversation for a game.
 func (cs *ChatService) GetConversation(gameID int) *Conversation {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
 	return cs.conversations[gameID]
 }
 
 // GetConversationHistory returns the message history for a game.
 func (cs *ChatService) GetConversationHistory(gameID int) []Message {
+	cs.mu.RLock()
 	conversation := cs.conversations[gameID]
+	cs.mu.RUnlock()
 	if conversation == nil {
 		return []Message{}
 	}
@@ -378,7 +398,9 @@ func (cs *ChatService) GetConversationHistory(gameID int) []Message {
 
 // ClearConversation removes the conversation for a game.
 func (cs *ChatService) ClearConversation(gameID int) {
+	cs.mu.Lock()
 	delete(cs.conversations, gameID)
+	cs.mu.Unlock()
 	cs.logger.Info("Cleared conversation", zap.Int("game_id", gameID))
 }
 
@@ -420,8 +442,10 @@ func (cs *ChatService) addMessage(conversation *Conversation, msgType, content s
 		Timestamp: time.Now(),
 	}
 
+	cs.mu.Lock()
 	conversation.Messages = append(conversation.Messages, message)
 	conversation.UpdatedAt = time.Now()
+	cs.mu.Unlock()
 
 	return messageID
 }
@@ -590,3 +614,6 @@ func (cs *ChatService) determineGamePhase(moveCount int) string {
 		return "endgame"
 	}
 }
+
+// SetChatbotForTesting allows injection of a mock chatbot in tests.
+func (cs *ChatService) SetChatbotForTesting(c ChatbotClient) { cs.chatbot = c }
