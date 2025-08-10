@@ -39,11 +39,10 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
-
-      - name: Generate coverage report
-        run: go tool cover -html=coverage.out -o coverage.html
+      - name: Run tests with coverage (excluding examples)
+        run: |
+          make test-coverage
+          # Already generates coverage.out and coverage.html
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
