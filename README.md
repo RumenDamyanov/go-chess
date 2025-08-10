@@ -39,6 +39,7 @@ This project showcases modern Go development practices and serves as a demonstra
 ## ✨ Key Features
 
 ### Core Chess Engine
+
 • **Complete Rule Implementation**: Full chess rules including castling, en passant, pawn promotion
 • **Move Validation**: Legal move checking with check/checkmate detection
 • **FEN Notation Support**: Complete Forsyth-Edwards Notation for position export/import
@@ -48,6 +49,7 @@ This project showcases modern Go development practices and serves as a demonstra
 • **Legal Move Generation**: Fast legal move computation for AI analysis
 
 ### 🚀 Advanced Features
+
 • **RESTful API**: Complete HTTP API for frontend integration
 • **WebSocket Support**: Real-time game updates and move streaming
 • **AI Opponents**: Multiple AI algorithms with configurable difficulty
@@ -55,6 +57,7 @@ This project showcases modern Go development practices and serves as a demonstra
 • **Analysis Engine**: Position evaluation and move suggestions
 
 ### 🛠️ Technical Excellence
+
 • **High Test Coverage**: Comprehensive unit and integration tests
 • **Static Analysis**: golangci-lint, CodeQL security scanning
 • **CI/CD Pipeline**: Automated testing, coverage reporting, and quality checks
@@ -62,6 +65,7 @@ This project showcases modern Go development practices and serves as a demonstra
 • **Documentation**: Extensive API documentation with examples
 
 ### 🤖 LLM-Powered AI Integration ✨
+
 • **Multiple Provider Support**: OpenAI GPT-4, Anthropic Claude, Google Gemini, xAI Grok, DeepSeek
 • **Custom API Keys**: Per-request API key support for any LLM provider
 • **Chess Intelligence**: AI understands real game state via FEN notation and legal moves
@@ -77,6 +81,7 @@ This project showcases modern Go development practices and serves as a demonstra
 > **📖 Complete documentation available in our [GitHub Wiki](https://github.com/RumenDamyanov/go-chess/wiki)**
 
 ### 🚀 Quick Navigation
+
 • **[🚀 Quick Start Guide](https://github.com/RumenDamyanov/go-chess/wiki/Quick-Start-Guide)** - Get up and running in 5 minutes
 • **[📋 API Reference](https://github.com/RumenDamyanov/go-chess/wiki/API-Reference)** - Complete HTTP API documentation
 • **[🤖 LLM AI Guide](https://github.com/RumenDamyanov/go-chess/wiki/LLM-AI-Guide)** - Advanced AI integration with ChatGPT, Claude, etc.
@@ -86,6 +91,7 @@ This project showcases modern Go development practices and serves as a demonstra
 • **[❓ FAQ](https://github.com/RumenDamyanov/go-chess/wiki/FAQ)** - Frequently asked questions
 
 ### 📖 More Guides
+
 • [Installation Guide](https://github.com/RumenDamyanov/go-chess/wiki/Installation-Guide) - Detailed installation instructions
 • [Docker Deployment](https://github.com/RumenDamyanov/go-chess/wiki/Docker-Deployment) - Container deployment and orchestration
 • [Chess Engine Basics](https://github.com/RumenDamyanov/go-chess/wiki/Chess-Engine-Basics) - Understanding the core engine
@@ -110,6 +116,7 @@ This project showcases modern Go development practices and serves as a demonstra
 ## 🧠 Enhanced Chess Intelligence & Chat Features
 
 ### Real Chess AI Understanding
+
 The AI integration now provides genuine chess intelligence powered by Large Language Models:
 
 - **Real Board Analysis**: AI sees actual game positions via FEN notation, not placeholder data
@@ -119,6 +126,7 @@ The AI integration now provides genuine chess intelligence powered by Large Lang
 - **Strategic Commentary**: AI provides meaningful analysis based on actual position evaluation
 
 ### Flexible API Key Management
+
 Use your own API keys for maximum control and cost efficiency:
 
 - **Per-Request Keys**: Specify different API keys for each request
@@ -127,6 +135,7 @@ Use your own API keys for maximum control and cost efficiency:
 - **Cost Control**: Use your preferred provider billing and rate limits
 
 ### Enhanced MoveContext
+
 Every AI interaction includes rich game context:
 
 ```json
@@ -143,7 +152,7 @@ Every AI interaction includes rich game context:
 
 ## 🏗️ Project Structure
 
-```
+```text
 go-chess/
 ├── engine/              # Core chess engine
 │   ├── board.go         # Board representation
@@ -398,20 +407,24 @@ func main() {
 ## 🎮 API Endpoints
 
 ### Game Management
+
 • `POST /api/games` - Create a new game
 • `GET /api/games/{id}` - Get game state
 • `DELETE /api/games/{id}` - Delete a game
 
 ### Game Actions
+
 • `POST /api/games/{id}/moves` - Make a move
 • `GET /api/games/{id}/moves` - Get move history
 • `POST /api/games/{id}/ai-move` - Get AI move suggestion
 
 ### 🤖 LLM AI Features
+
 • `POST /api/games/{id}/chat` - Chat with your AI opponent
 • `POST /api/games/{id}/react` - Get AI reaction to a move
 
 ### Game Analysis
+
 • `GET /api/games/{id}/analysis` - Get position analysis
 • `GET /api/games/{id}/legal-moves` - Get all legal moves
 • `POST /api/games/{id}/fen` - Load position from FEN
@@ -485,6 +498,7 @@ curl -X POST http://localhost:8080/api/chat \
 ### Enhanced API Response Examples
 
 **Chat Response with Rich Game Context:**
+
 ```json
 {
   "response": "Excellent opening! The King's Pawn opening controls the center and develops quickly. I'm considering Nc6 to challenge your central control.",
@@ -508,72 +522,78 @@ curl -X POST http://localhost:8080/api/chat \
 
 ### Real-time Game Updates
 
-WebSocket support for live game updates:
+Real-time updates are provided by the built-in WebSocket endpoint exposed by the API server at:
 
-```go
-import "github.com/rumendamyanov/go-chess/websocket"
+```text
+GET /ws/games/:id
+```
 
-// Create WebSocket handler
-wsHandler := websocket.NewGameHandler()
+Each connected client receives JSON payloads with current FEN, move history, and status after state changes. No separate websocket package is required—`api.Server` configures the handler internally. Example (JavaScript):
 
-// Setup WebSocket route
-r.GET("/ws/games/:id", wsHandler.HandleGameConnection)
+```javascript
+const ws = new WebSocket(`ws://localhost:8080/ws/games/${gameId}`);
+ws.onmessage = ev => {
+  const update = JSON.parse(ev.data);
+  console.log('Game update', update);
+};
+```
+
+For CLI debugging you can use websocat:
+
+```bash
+websocat ws://localhost:8080/ws/games/1
 ```
 
 ### AI Configuration
 
+The core repository currently ships with Random, Minimax, and LLM-backed engines. Additional placeholders (AlphaBeta, MonteCarlo, etc.) shown in earlier docs are not yet implemented. Configure engines as needed, e.g. when wiring custom routing or selection logic.
+
 ```go
 import "go.rumenx.com/chess/ai"
 
-// Configure different AI engines
 engines := map[string]ai.Engine{
-    "random":     ai.NewRandomAI(),
-    "minimax":    ai.NewMinimaxAI(ai.DifficultyHard),
-    "alphabeta":  ai.NewAlphaBetaAI(ai.DifficultyExpert),
-    "montecarlo": ai.NewMonteCarloAI(ai.DifficultyExpert),
+  "random":  ai.NewRandomAI(),
+  "minimax": ai.NewMinimaxAI(ai.DifficultyMedium),
+  // LLM engine is created on demand based on request/provider config
 }
 ```
 
 ### Game Persistence
 
+PGN export and FEN load are handled via engine methods and API endpoints (e.g. `/api/games/{id}/pgn`, `/api/games/{id}/fen`). Use:
+
 ```go
-import "github.com/rumendamyanov/go-chess/persistence"
-
-// Save game to PGN format
-pgn, err := persistence.SaveToPGN(game)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Load game from FEN notation
-fen := "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
-game, err := persistence.LoadFromFEN(fen)
-if err != nil {
-    log.Fatal(err)
-}
+fen := game.ToFEN()
+// To load: engine.NewGameFromFEN(fen) or API POST /api/games/{id}/fen
 ```
+
+No separate `persistence` package is currently included—older docs referenced a future module.
 
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (core + examples)
 go test ./...
 make test
 
-# Run tests with coverage
-go test -race -coverprofile=coverage.out ./...
-make test-coverage
+# Coverage (core packages only – examples excluded to avoid dilution)
+make test-coverage         # uses filtered package list
 
-# Run benchmarks
+# Full coverage including examples (may lower % because examples are illustrative)
+make test-coverage-all
+
+# Benchmarks
 go test -bench=. ./...
 make bench
 
-# Build all examples
+# Build example binaries
 make build-examples
 
 # Clean build artifacts
 make clean
 ```
+
+Coverage strategy: examples are intentionally excluded from the primary badge to focus on engine/API/chat/config quality. Use `test-coverage-all` for a holistic view.
 
 ## Build & Development
 
@@ -716,6 +736,7 @@ ws.onmessage = (event) => {
 - **AI Response Time**: 50ms-5s depending on difficulty level and LLM provider
 - **Build Time**: <5 seconds for full project, ~7 seconds for Docker image
 - **Test Coverage**: All packages passing with comprehensive test suites
+- **Core Coverage**: ~81% (engine, ai, api, chat, config) with examples excluded
 - **Docker Image Size**: ~15MB (multi-stage Alpine-based build)
 - **Container Startup**: <2 seconds with health checks
 - **LLM Integration**: Sub-second response times with proper API keys
@@ -775,31 +796,26 @@ The project includes:
 ## Example Projects
 
 The `examples/` directory contains complete example applications:
-
-• **Simple CLI Game**: Interactive command-line chess game
-• **HTTP API Server**: Complete REST API implementation
-• **WebSocket Demo**: Real-time multiplayer chess
-• **AI Tournament**: AI engines competing against each other
+• **CLI Game** (`examples/cli`) – minimal interactive CLI
+• **API Server** (`examples/api-server`) – standalone HTTP server
+• **Minimal Server** (`examples/minimal-server`) – smallest runnable demo
+• **Test Server** (`examples/test-server`) – utility server for integration tests
 
 ```bash
-# Run the CLI game
+# Run CLI example
 go run examples/cli/main.go
-make run-cli
 
-# Start the API server
+# Run API server example
 go run examples/api-server/main.go
-make run-server
 
-# Run with Docker
-make docker-build
-make docker-run
+# Run minimal server
+go run examples/minimal-server/minimal_server.go
 
-# Development environment
-make docker-dev
-
-# Run AI tournament
-go run examples/tournament/main.go
+# Run test server (used internally)
+go run examples/test-server/test_server.go
 ```
+
+Note: Some earlier documentation referenced a tournament and dedicated websocket demo—those have not been merged yet.
 
 ## Contributing
 
