@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -129,6 +130,10 @@ type Game struct {
 	moveCount       int
 	moveHistory     []Move
 	status          GameStatus
+	// startedFromFEN indicates the game began (or was reset) from a custom FEN
+	startedFromFEN bool
+	// startingFEN stores the original FEN the current game was loaded from (if any)
+	startingFEN string
 }
 
 // NewGame creates a new chess game with the standard starting position.
@@ -147,6 +152,8 @@ func NewGame() *Game {
 		moveCount:       1,
 		moveHistory:     make([]Move, 0),
 		status:          InProgress,
+		startedFromFEN:  false,
+		startingFEN:     "",
 	}
 }
 
@@ -216,6 +223,19 @@ func (g *Game) ParseMove(notation string) (Move, error) {
 	moveType := Normal
 	if !captured.IsEmpty() {
 		moveType = Capture
+	} else if piece.Type == Pawn && from.File() != to.File() { // diagonal pawn move to empty square => possible en passant
+		// Valid en passant if target square equals enPassantSquare
+		if g.enPassantSquare != -1 && to == g.enPassantSquare {
+			moveType = EnPassant
+			// Captured pawn is behind the target square
+			var capSq Square
+			if piece.Color == White {
+				capSq = to - 8
+			} else {
+				capSq = to + 8
+			}
+			captured = g.board.GetPiece(capSq)
+		}
 	}
 
 	move := Move{
@@ -338,6 +358,8 @@ func (g *Game) makeMoveWithoutStatusUpdate(move Move) {
 	// Handle castling
 	if move.Type == Castling {
 		g.executeCastling(move)
+		// Remove castling rights for the moving side (king moved)
+		g.updateCastlingRights(move)
 		return
 	}
 
@@ -378,6 +400,11 @@ func (g *Game) makeMove(move Move) {
 	// Handle castling
 	if move.Type == Castling {
 		g.executeCastling(move)
+		// Update castling rights after executing castling (king moved)
+		g.updateCastlingRights(move)
+		// No en passant square or half-move clock change beyond standard; handle them similarly to normal moves
+		g.updateEnPassantSquare(move)
+		g.updateHalfMoveClock(move)
 		return
 	}
 
@@ -602,7 +629,46 @@ func sign(x int) int {
 
 // Placeholder implementations for complex methods
 func (g *Game) updateCastlingRights(move Move) {
-	// Implementation would update castling rights based on the move
+	// If a king moves, remove both rights for that color
+	if move.Piece.Type == King {
+		if move.Piece.Color == White {
+			g.castlingRights.WhiteKingside = false
+			g.castlingRights.WhiteQueenside = false
+		} else {
+			g.castlingRights.BlackKingside = false
+			g.castlingRights.BlackQueenside = false
+		}
+	}
+
+	// If a rook moves from its original square, remove that side's right
+	if move.Piece.Type == Rook {
+		switch move.From {
+		case H1:
+			g.castlingRights.WhiteKingside = false
+		case A1:
+			g.castlingRights.WhiteQueenside = false
+		case H8:
+			g.castlingRights.BlackKingside = false
+		case A8:
+			g.castlingRights.BlackQueenside = false
+		}
+	}
+
+	// If a rook is captured on its original square, remove that side's right
+	if move.Type == Capture && move.Captured.Type == Rook {
+		switch move.To { // capture destination square contains captured rook
+		case H1:
+			g.castlingRights.WhiteKingside = false
+		case A1:
+			g.castlingRights.WhiteQueenside = false
+		case H8:
+			g.castlingRights.BlackKingside = false
+		case A8:
+			g.castlingRights.BlackQueenside = false
+		}
+	}
+
+	// If castling move, move the rook implicitly handled elsewhere; rights removed via king move logic above
 }
 
 func (g *Game) updateEnPassantSquare(move Move) {
@@ -1136,6 +1202,334 @@ func (g *Game) pieceToFENChar(piece Piece) string {
 		return strings.ToUpper(char)
 	}
 	return char
+}
+
+// ParseFEN loads a position from a FEN string into the current game.
+// Supported fields: piece placement, active color, castling rights, en passant square,
+// halfmove clock, fullmove number. Move history and status are reset and then status recalculated.
+func (g *Game) ParseFEN(fen string) error {
+	parts := strings.Fields(strings.TrimSpace(fen))
+	if len(parts) < 4 {
+		return fmt.Errorf("invalid FEN: expected at least 4 fields, got %d", len(parts))
+	}
+
+	// 1. Piece placement
+	ranks := strings.Split(parts[0], "/")
+	if len(ranks) != 8 {
+		return fmt.Errorf("invalid FEN: expected 8 ranks, got %d", len(ranks))
+	}
+
+	// Clear board first
+	for i := 0; i < 64; i++ {
+		g.board.squares[i] = Piece{Type: Empty}
+	}
+
+	for rankIdx, rankStr := range ranks { // rankIdx 0 = rank 8 in FEN
+		file := 0
+		for _, ch := range rankStr {
+			if file > 7 {
+				return fmt.Errorf("invalid FEN rank %d: too many squares", 8-rankIdx)
+			}
+			if ch >= '1' && ch <= '8' {
+				skip := int(ch - '0')
+				file += skip
+				continue
+			}
+			var pieceType PieceType
+			var color Color
+			switch ch {
+			case 'p', 'P':
+				pieceType = Pawn
+			case 'r', 'R':
+				pieceType = Rook
+			case 'n', 'N':
+				pieceType = Knight
+			case 'b', 'B':
+				pieceType = Bishop
+			case 'q', 'Q':
+				pieceType = Queen
+			case 'k', 'K':
+				pieceType = King
+			default:
+				return fmt.Errorf("invalid FEN piece character: %c", ch)
+			}
+			if ch >= 'A' && ch <= 'Z' {
+				color = White
+			} else {
+				color = Black
+			}
+			square := Square((7-rankIdx)*8 + file)
+			g.board.squares[square] = Piece{Type: pieceType, Color: color}
+			file++
+		}
+		if file != 8 {
+			return fmt.Errorf("invalid FEN rank %d: expected 8 files, got %d", 8-rankIdx, file)
+		}
+	}
+
+	// 2. Active color
+	if len(parts[1]) != 1 || (parts[1] != "w" && parts[1] != "b") {
+		return fmt.Errorf("invalid FEN active color: %s", parts[1])
+	}
+	if parts[1] == "w" {
+		g.activeColor = White
+	} else {
+		g.activeColor = Black
+	}
+
+	// 3. Castling rights
+	castling := parts[2]
+	g.castlingRights = CastlingRights{}
+	if castling != "-" {
+		for _, ch := range castling {
+			switch ch {
+			case 'K':
+				g.castlingRights.WhiteKingside = true
+			case 'Q':
+				g.castlingRights.WhiteQueenside = true
+			case 'k':
+				g.castlingRights.BlackKingside = true
+			case 'q':
+				g.castlingRights.BlackQueenside = true
+			default:
+				return fmt.Errorf("invalid castling char: %c", ch)
+			}
+		}
+	}
+
+	// 4. En passant square
+	enPassant := parts[3]
+	if enPassant == "-" {
+		g.enPassantSquare = -1
+	} else {
+		if len(enPassant) != 2 {
+			return fmt.Errorf("invalid en-passant square: %s", enPassant)
+		}
+		sq, err := SquareFromString(enPassant)
+		if err != nil {
+			return fmt.Errorf("invalid en-passant square: %w", err)
+		}
+		g.enPassantSquare = sq
+	}
+
+	// 5 & 6 (optional) halfmove clock and fullmove number
+	g.halfMoveClock = 0
+	g.moveCount = 1
+	if len(parts) >= 5 {
+		hm, err := strconv.Atoi(parts[4])
+		if err != nil || hm < 0 {
+			return fmt.Errorf("invalid halfmove clock: %s", parts[4])
+		}
+		g.halfMoveClock = hm
+	}
+	if len(parts) >= 6 {
+		fm, err := strconv.Atoi(parts[5])
+		if err != nil || fm < 1 {
+			return fmt.Errorf("invalid fullmove number: %s", parts[5])
+		}
+		g.moveCount = fm
+	}
+
+	// Reset move history and recalc status
+	g.moveHistory = nil
+	g.status = InProgress
+	g.startedFromFEN = true
+	g.startingFEN = fen
+	g.updateGameStatus()
+	return nil
+}
+
+// StartedFromFEN returns true if the current game originated from a custom FEN.
+func (g *Game) StartedFromFEN() bool { return g.startedFromFEN }
+
+// StartingFEN returns the original starting FEN if provided.
+func (g *Game) StartingFEN() string { return g.startingFEN }
+
+// Evaluate returns a simple material + activity evaluation (centipawns from White's perspective).
+func (g *Game) Evaluate() int {
+	values := map[PieceType]int{
+		Pawn:   100,
+		Knight: 320,
+		Bishop: 330,
+		Rook:   500,
+		Queen:  900,
+		King:   0,
+	}
+	score := 0
+	for sq := Square(0); sq < 64; sq++ {
+		p := g.board.GetPiece(sq)
+		if p.IsEmpty() {
+			continue
+		}
+		v := values[p.Type]
+		if p.Color == White {
+			score += v
+		} else {
+			score -= v
+		}
+		// Small central control bonus
+		file := sq.File()
+		rank := sq.Rank()
+		if file >= 2 && file <= 5 && rank >= 2 && rank <= 5 { // 16 central squares
+			if p.Color == White {
+				score += 5
+			} else {
+				score -= 5
+			}
+		}
+	}
+	return score
+}
+
+// GenerateSAN returns SAN strings for the game's move history.
+// It reconstructs moves from the starting position (initial or loaded FEN) to ensure correctness.
+func (g *Game) GenerateSAN() []string {
+	san := make([]string, 0, len(g.moveHistory))
+	// Recreate starting position
+	var replay *Game
+	if g.startedFromFEN && g.startingFEN != "" {
+		replay = NewGame()
+		_ = replay.ParseFEN(g.startingFEN) // ignore error: stored FEN assumed valid
+	} else {
+		replay = NewGame()
+	}
+	for _, mv := range g.moveHistory {
+		san = append(san, replay.sanForMove(mv))
+		// Apply move to advance position
+		_ = replay.MakeMove(mv) // moves are assumed legal as they occurred in original game
+	}
+	return san
+}
+
+// sanForMove computes SAN for a move given the current position (before move is applied).
+func (g *Game) sanForMove(m Move) string {
+	piece := g.board.GetPiece(m.From)
+	if piece.Type == King && m.Type == Castling {
+		if m.To.File() > m.From.File() {
+			return "O-O"
+		}
+		return "O-O-O"
+	}
+
+	// Determine if capture (include en passant)
+	target := g.board.GetPiece(m.To)
+	isCapture := (!target.IsEmpty() && target.Color != piece.Color) || m.Type == Capture || m.Type == EnPassant
+
+	var sb strings.Builder
+	if piece.Type == Pawn {
+		// Pawn moves
+		if isCapture {
+			sb.WriteByte(byte('a' + m.From.File()))
+			sb.WriteByte('x')
+		}
+		sb.WriteString(m.To.String())
+		if m.Type == Promotion && m.Promotion != Empty {
+			sb.WriteByte('=')
+			// Map promotion piece to uppercase SAN letter
+			switch m.Promotion {
+			case Queen:
+				sb.WriteString("Q")
+			case Rook:
+				sb.WriteString("R")
+			case Bishop:
+				sb.WriteString("B")
+			case Knight:
+				sb.WriteString("N")
+			default:
+				sb.WriteString("?")
+			}
+		}
+	} else { // Piece moves (N,B,R,Q,K)
+		// Map piece type to SAN letter
+		switch piece.Type {
+		case Knight:
+			sb.WriteString("N")
+		case Bishop:
+			sb.WriteString("B")
+		case Rook:
+			sb.WriteString("R")
+		case Queen:
+			sb.WriteString("Q")
+		case King:
+			sb.WriteString("K")
+		default:
+			sb.WriteString("?")
+		}
+		// Need potential disambiguation
+		needFile, needRank := g.disambiguation(piece, m)
+		if needFile {
+			sb.WriteByte(byte('a' + m.From.File()))
+		}
+		if needRank {
+			sb.WriteByte(byte('1' + m.From.Rank()))
+		}
+		if isCapture {
+			sb.WriteByte('x')
+		}
+		sb.WriteString(m.To.String())
+		if m.Type == Promotion && m.Promotion != Empty {
+			sb.WriteByte('=')
+			switch m.Promotion {
+			case Queen:
+				sb.WriteString("Q")
+			case Rook:
+				sb.WriteString("R")
+			case Bishop:
+				sb.WriteString("B")
+			case Knight:
+				sb.WriteString("N")
+			default:
+				sb.WriteString("?")
+			}
+		}
+	}
+
+	// Determine check / mate after move using full MakeMove (which switches side & updates status)
+	gameCopy := g.copy()
+	_ = gameCopy.MakeMove(m) // ignore error; original move already known legal
+	if gameCopy.status == WhiteWins || gameCopy.status == BlackWins {
+		sb.WriteByte('#')
+	} else if gameCopy.isInCheck(gameCopy.activeColor) { // after MakeMove, activeColor is opponent
+		sb.WriteByte('+')
+	}
+	return sb.String()
+}
+
+// disambiguation determines if file/rank disambiguation is needed for a piece move.
+func (g *Game) disambiguation(piece Piece, move Move) (needFile bool, needRank bool) {
+	if piece.Type == Pawn || piece.Type == King { // King moves rarely ambiguous except castling handled earlier
+		return false, false
+	}
+	// Find other same-type pieces that can also move to destination
+	for sq := Square(0); sq < 64; sq++ {
+		if sq == move.From {
+			continue
+		}
+		p := g.board.GetPiece(sq)
+		if p.IsEmpty() || p.Color != piece.Color || p.Type != piece.Type {
+			continue
+		}
+		// Generate pseudo-legal moves for that piece
+		candidates := g.generatePseudoLegalMoves(sq, p)
+		for _, cand := range candidates {
+			if cand.To != move.To || !g.IsLegalMove(cand) {
+				continue
+			}
+			// Another same-type piece can also move to destination.
+			// Decide minimal SAN disambiguation per FIDE rules:
+			// 1. If pieces share file -> use rank.
+			// 2. Else if share rank -> use file.
+			// 3. Else (different file and rank) -> use file only.
+			if sq.File() == move.From.File() {
+				needRank = true
+			} else if sq.Rank() == move.From.Rank() {
+				needFile = true
+			} else {
+				needFile = true
+			}
+		}
+	}
+	return
 }
 
 func (g *Game) copy() *Game {

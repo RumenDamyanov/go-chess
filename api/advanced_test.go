@@ -257,6 +257,23 @@ func TestAnalyzePosition(t *testing.T) {
 	if _, ok := analysisResp["evaluation"]; !ok {
 		t.Error("Expected evaluation in analysis response")
 	}
+	// New enhanced analysis fields
+	if _, ok := analysisResp["material"]; !ok {
+		// backward compatibility skip instead of hard fail if feature not merged
+		t.Error("Expected material breakdown in analysis response")
+	} else {
+		if mat, ok := analysisResp["material"].(map[string]interface{}); ok {
+			if _, ok := mat["white"]; !ok {
+				t.Error("Expected material.white counts")
+			}
+			if _, ok := mat["black"]; !ok {
+				t.Error("Expected material.black counts")
+			}
+		}
+	}
+	if _, ok := analysisResp["mobility"]; !ok {
+		t.Error("Expected mobility in analysis response")
+	}
 }
 
 // TestGetAIMove tests the AI move endpoint
@@ -318,6 +335,12 @@ func TestGetAIMove(t *testing.T) {
 	}
 	if _, ok := aiResp["engine"]; !ok {
 		t.Error("Expected engine in AI response")
+	}
+	// Evaluation fields (before/after/diff)
+	for _, field := range []string{"evaluation", "evaluation_cp", "evaluation_after", "evaluation_after_cp", "evaluation_diff", "evaluation_diff_cp"} {
+		if _, ok := aiResp[field]; !ok {
+			t.Errorf("Expected %s in AI response", field)
+		}
 	}
 }
 
@@ -396,6 +419,12 @@ func TestGetAIHint(t *testing.T) {
 	}
 	if _, ok := hintResp["explanation"]; !ok {
 		t.Error("Expected 'explanation' field in hint response")
+	}
+	// Evaluation fields (before/after/diff)
+	for _, field := range []string{"evaluation", "evaluation_cp", "evaluation_after", "evaluation_after_cp", "evaluation_diff", "evaluation_diff_cp"} {
+		if _, ok := hintResp[field]; !ok {
+			t.Errorf("Expected %s in hint response", field)
+		}
 	}
 
 	// Test with specific AI request parameters
@@ -882,5 +911,53 @@ func TestChatServiceIntegration(t *testing.T) {
 	// Test that server initializes with chat service
 	if server.chatService == nil {
 		t.Error("Expected chat service to be initialized, got nil")
+	}
+}
+
+// TestPGNTagsAndPlayerNames validates PGN output contains enriched tags and dynamic player naming
+func TestPGNTagsAndPlayerNames(t *testing.T) {
+	cfg := config.Default()
+	server := NewServer(cfg)
+	router := gin.New()
+	server.SetupRoutes(router)
+
+	// Create game where AI plays white so names swap
+	gameCreateData := map[string]string{"ai_color": "white"}
+	gameCreateJSON, _ := json.Marshal(gameCreateData)
+	createReq, _ := http.NewRequest("POST", "/api/games", bytes.NewBuffer(gameCreateJSON))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	router.ServeHTTP(createRR, createReq)
+
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("expected 201 creating game, got %d", createRR.Code)
+	}
+
+	var createResp map[string]interface{}
+	json.Unmarshal(createRR.Body.Bytes(), &createResp)
+	gameID := createResp["id"]
+
+	// Fetch PGN
+	pgnURL := fmt.Sprintf("/api/games/%v/pgn", gameID)
+	pgnReq, _ := http.NewRequest("GET", pgnURL, nil)
+	pgnRR := httptest.NewRecorder()
+	router.ServeHTTP(pgnRR, pgnReq)
+
+	if pgnRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for PGN, got %d", pgnRR.Code)
+	}
+	pgn := pgnRR.Body.String()
+
+	// Required tags
+	required := []string{
+		"[White \"AI\"]",
+		"[Black \"Player\"]",
+		"[Variant \"Standard\"]",
+		"[Annotator \"js-chess\"]",
+	}
+	for _, tag := range required {
+		if !strings.Contains(pgn, tag) {
+			t.Errorf("Expected PGN to contain tag %s", tag)
+		}
 	}
 }
