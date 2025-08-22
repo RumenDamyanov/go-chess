@@ -798,6 +798,7 @@ The project includes:
 The `examples/` directory contains complete example applications:
 • **CLI Game** (`examples/cli`) – minimal interactive CLI
 • **API Server** (`examples/api-server`) – standalone HTTP server
+• **GUI Demo** (`examples/gui`) – Ebiten-based desktop board (human vs AI or human vs human)
 • **Minimal Server** (`examples/minimal-server`) – smallest runnable demo
 • **Test Server** (`examples/test-server`) – utility server for integration tests
 
@@ -816,6 +817,41 @@ go run examples/test-server/test_server.go
 ```
 
 Note: Some earlier documentation referenced a tournament and dedicated websocket demo—those have not been merged yet.
+
+## 🎨 GUI Demo (Ebiten)
+
+An experimental graphical chess interface is included under `examples/gui` built with [Ebiten](https://ebiten.org/). It showcases the engine, legal move generation, AI integration, and piece asset handling.
+
+### Run It
+
+```bash
+make run-gui        # builds and runs the GUI demo
+# or directly
+go run examples/gui/main.go
+```
+
+### Features
+
+| Action | Key / Mouse |
+|--------|-------------|
+| New game | N |
+| Toggle Human vs AI / Human vs Human | A (or click Mode button) |
+| Undo last move (double in Human vs AI to revert your position) | U (or Undo button) |
+| Flip board orientation | F |
+| Evaluate current position (simple static eval) | E |
+| Select difficulty | Click difficulty list (before/after game) |
+| Choose side (before first move) | Click White / Black buttons or W / B keys |
+| Make a move | Click piece, then click highlighted destination |
+
+Highlighted circles show legal target squares for the currently selected piece; the previous move squares are shaded. Castling, promotions (auto‑queen for now), and undo are supported. AI thinking runs asynchronously with a timeout.
+
+### Assets
+
+Piece images are pre‑rasterized PNGs (Cburnett set). No external raster tools are required at runtime. Optional SVGs (if added locally) are ignored for now. See the "Chess Piece Artwork Licensing" section below for attribution and licensing details.
+
+### Notes / Roadmap
+
+Planned GUI improvements (not final): selectable promotion piece, richer evaluation display, pure Go SVG rendering path, and themed boards.
 
 ## Contributing
 
@@ -836,3 +872,22 @@ See [CHANGELOG.md](https://github.com/RumenDamyanov/go-chess/blob/master/CHANGEL
 ## License
 
 MIT License. See [LICENSE.md](https://github.com/RumenDamyanov/go-chess/blob/master/LICENSE.md) for details.
+
+## ♟ Chess Piece Artwork Licensing
+
+The bundled chess piece images (PNG) in `examples/gui/assets/pieces/` are derivative works of the well‑known "Cburnett" chess set by Colin M.L. Burnett (User:Cburnett) sourced from Wikimedia Commons. They are provided under a dual license: **GPL-2.0+ OR CC BY-SA 3.0**. You may choose either license when using or redistributing those specific image files. This dual licensing applies only to the artwork; all Go source code in this repository remains MIT‑licensed.
+
+Attribution (required when distributing the artwork):
+
+> Chess piece images derived from the Cburnett set – © Colin M.L. Burnett (User:Cburnett), licensed under GPL-2.0+ or CC BY-SA 3.0.
+
+Included filenames (PNG rasters sized for the demo GUI):
+
+```text
+w_p.png w_n.png w_b.png w_r.png w_q.png w_k.png
+b_p.png b_n.png b_b.png b_r.png b_q.png b_k.png
+```
+
+Optional SVG sources may also be present with matching names (`.svg` extension). The runtime only requires the PNGs; SVGs are reserved for potential future vector rendering. If you wish to avoid copyleft assets entirely, you can replace these files with a permissively licensed set (keeping the same filenames) and remove the per‑directory license file.
+
+Note: Do not assume the artwork inherits the project’s MIT license. When redistributing binaries that package these images, include the attribution above and the chosen license text (GPL v2+ or CC BY-SA 3.0) as required.

@@ -6,10 +6,12 @@
 BINARY_NAME=go-chess
 BINARY_CLI=go-chess-cli
 BINARY_SERVER=go-chess-server
+BINARY_GUI=go-chess-gui
 BUILD_DIR=build
 MAIN_PACKAGE=./examples/cli
 CLI_PACKAGE=./examples/cli
 SERVER_PACKAGE=./examples/api-server
+GUI_PACKAGE=./examples/gui
 
 # Go commands
 GOCMD=go
@@ -39,8 +41,13 @@ build-server:
 	mkdir -p $(BUILD_DIR)
 	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_SERVER) -v $(SERVER_PACKAGE)
 
+# Build GUI example
+build-gui:
+	mkdir -p $(BUILD_DIR)
+	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_GUI) -v $(GUI_PACKAGE)
+
 # Build all examples
-build-examples: build-cli build-server
+build-examples: build-cli build-server build-gui
 
 # Run tests
 test:
@@ -102,6 +109,11 @@ run-cli: build-cli
 run-server: build-server
 	./$(BUILD_DIR)/$(BINARY_SERVER)
 
+# Run GUI example
+run-gui: build-gui
+	./$(BUILD_DIR)/$(BINARY_GUI)
+
+
 # Docker build
 docker-build:
 	docker build -t go-chess .
@@ -153,6 +165,7 @@ help:
 	@echo "  build               - Build the main application"
 	@echo "  build-cli           - Build CLI example"
 	@echo "  build-server        - Build API server example"
+	@echo "  build-gui           - Build GUI example (Ebiten)"
 	@echo "  build-examples      - Build all examples"
 	@echo "  test                - Run tests"
 	@echo "  test-coverage       - Run tests with coverage"
@@ -165,6 +178,7 @@ help:
 	@echo "  update-deps         - Update dependencies"
 	@echo "  run-cli             - Run CLI example"
 	@echo "  run-server          - Run API server example"
+	@echo "  run-gui             - Run GUI example"
 	@echo "  docker-build        - Build Docker image"
 	@echo "  docker-run          - Run Docker container"
 	@echo "  docker-stop         - Stop Docker container"
