@@ -58,6 +58,7 @@ go-chess-cli
 go-chess-server
 chess-cli
 chess-server
+gui
 
 # Coverage files
 coverage.out
@@ -86,3 +87,10 @@ minimal_test.go
 docs/
 wiki/
 *.patch
+
+# Dev-only asset helper scripts (not part of distribution)
+scripts/fetch_cburnett_svg.sh
+scripts/generate_piece_pngs.sh
+
+# AI tools
+.ai/

@@ -134,6 +134,19 @@ type Game struct {
 	startedFromFEN bool
 	// startingFEN stores the original FEN the current game was loaded from (if any)
 	startingFEN string
+	// stateStack holds snapshots prior to each executed move to enable UndoMove.
+	stateStack []gameState
+}
+
+// gameState is an internal snapshot of reversible game state for undo.
+type gameState struct {
+	board           *Board
+	activeColor     Color
+	castlingRights  CastlingRights
+	enPassantSquare Square
+	halfMoveClock   int
+	moveCount       int
+	status          GameStatus
 }
 
 // NewGame creates a new chess game with the standard starting position.
@@ -154,6 +167,7 @@ func NewGame() *Game {
 		status:          InProgress,
 		startedFromFEN:  false,
 		startingFEN:     "",
+		stateStack:      make([]gameState, 0),
 	}
 }
 
@@ -334,6 +348,9 @@ func (g *Game) MakeMove(move Move) error {
 	if !g.IsLegalMove(move) {
 		return errors.New("illegal move")
 	}
+
+	// snapshot state for undo BEFORE applying move
+	g.pushState()
 
 	g.makeMove(move)
 	g.moveHistory = append(g.moveHistory, move)
@@ -1547,4 +1564,45 @@ func (g *Game) copy() *Game {
 	copy(newGame.moveHistory, g.moveHistory)
 
 	return newGame
+}
+
+// pushState saves a lightweight snapshot for undo before a move is applied.
+func (g *Game) pushState() {
+	st := gameState{
+		board:           g.board.Copy(),
+		activeColor:     g.activeColor,
+		castlingRights:  g.castlingRights,
+		enPassantSquare: g.enPassantSquare,
+		halfMoveClock:   g.halfMoveClock,
+		moveCount:       g.moveCount,
+		status:          g.status,
+	}
+	g.stateStack = append(g.stateStack, st)
+}
+
+// UndoMove reverts the last move if possible, restoring prior game state.
+func (g *Game) UndoMove() (Move, error) {
+	if len(g.moveHistory) == 0 || len(g.stateStack) == 0 {
+		return Move{}, errors.New("no move to undo")
+	}
+	mv := g.moveHistory[len(g.moveHistory)-1]
+	g.moveHistory = g.moveHistory[:len(g.moveHistory)-1]
+	st := g.stateStack[len(g.stateStack)-1]
+	g.stateStack = g.stateStack[:len(g.stateStack)-1]
+	// Restore snapshot
+	g.board = st.board.Copy()
+	g.activeColor = st.activeColor
+	g.castlingRights = st.castlingRights
+	g.enPassantSquare = st.enPassantSquare
+	g.halfMoveClock = st.halfMoveClock
+	g.moveCount = st.moveCount
+	g.status = st.status
+	return mv, nil
+}
+
+// popState removes the latest snapshot without restoring (unused but kept for completeness).
+func (g *Game) popState() {
+	if len(g.stateStack) > 0 {
+		g.stateStack = g.stateStack[:len(g.stateStack)-1]
+	}
 }
