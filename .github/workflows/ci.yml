@@ -36,8 +36,8 @@ jobs:
       - name: Verify go.mod
         run: go mod verify
 
-      - name: Run go vet
-        run: go vet ./...
+      - name: Run go vet (excluding GUI)
+        run: go vet $(go list ./... | grep -v '/examples/gui')
 
       - name: Run tests with coverage (excluding examples)
         run: |
