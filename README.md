@@ -97,6 +97,8 @@ This project showcases modern Go development practices and serves as a demonstra
 • [Chess Engine Basics](https://github.com/RumenDamyanov/go-chess/wiki/Chess-Engine-Basics) - Understanding the core engine
 • [Frontend Integration](https://github.com/RumenDamyanov/go-chess/wiki/Frontend-Integration) - Building chess UIs
 • [js-chess Demo](https://github.com/RumenDamyanov/js-chess) - Live JavaScript frontend showcase using go-chess backend
+• [npm-chess](https://github.com/RumenDamyanov/npm-chess) - TypeScript adaptation available as [@rumenx/chess](https://www.npmjs.com/package/@rumenx/chess) on npm
+• [react-chess Demo](https://github.com/RumenDamyanov/react-chess) - React frontend showcase using npm-chess as backend engine
 • [Game Formats](https://github.com/RumenDamyanov/go-chess/wiki/Game-Formats) - Working with PGN and FEN notation
 • [Examples](https://github.com/RumenDamyanov/go-chess/wiki/Examples) - Real-world usage examples
 
