@@ -57,8 +57,7 @@ func main() {
 					fmt.Printf("Error: %v\n", err)
 				} else {
 					// Check game status
-					if game.Status() != engine.InProgress {
-						fmt.Printf("Game over! Status: %s\n", game.Status().String())
+					if game.IsGameOver() {
 						fmt.Print("Type 'new' to start a new game or 'quit' to exit: ")
 						continue
 					}
@@ -78,7 +77,7 @@ func main() {
 								fmt.Println(game.Board().String())
 
 								// Check game status again
-								if game.Status() != engine.InProgress {
+								if game.IsGameOver() {
 									fmt.Printf("Game over! Status: %s\n", game.Status().String())
 									fmt.Print("Type 'new' to start a new game or 'quit' to exit: ")
 									continue
@@ -92,7 +91,7 @@ func main() {
 			}
 		}
 
-		if game.Status() == engine.InProgress {
+		if !game.IsGameOver() {
 			fmt.Printf("%s to move. Enter your move: ", game.ActiveColor().String())
 		} else {
 			fmt.Print("Enter command: ")

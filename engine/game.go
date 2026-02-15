@@ -94,6 +94,12 @@ const (
 	Draw
 )
 
+// IsGameOver returns true if the status represents a terminal game state.
+// Check and InProgress are NOT game over.
+func (gs GameStatus) IsGameOver() bool {
+	return gs == WhiteWins || gs == BlackWins || gs == Draw
+}
+
 // String returns the string representation of the game status.
 func (gs GameStatus) String() string {
 	switch gs {
@@ -184,6 +190,11 @@ func (g *Game) ActiveColor() Color {
 // Status returns the current game status.
 func (g *Game) Status() GameStatus {
 	return g.status
+}
+
+// IsGameOver returns true if the game has ended (checkmate, stalemate, or draw).
+func (g *Game) IsGameOver() bool {
+	return g.status.IsGameOver()
 }
 
 // MoveCount returns the current move count.
