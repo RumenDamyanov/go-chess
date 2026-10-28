@@ -22,25 +22,25 @@
     "providers": {
       "openai": {
         "api_key": "sk-your-openai-api-key-here",
-        "model": "gpt-4o",
+        "model": "gpt-5.4-mini",
         "endpoint": "https://api.openai.com/v1/chat/completions",
         "enabled": true
       },
       "anthropic": {
         "api_key": "sk-ant-your-anthropic-api-key-here",
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-5",
         "endpoint": "https://api.anthropic.com/v1/messages",
         "enabled": true
       },
       "gemini": {
         "api_key": "your-gemini-api-key-here",
-        "model": "gemini-1.5-pro",
+        "model": "gemini-3.8-flash",
         "endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
         "enabled": true
       },
       "xai": {
         "api_key": "xai-your-xai-api-key-here",
-        "model": "grok-beta",
+        "model": "grok-4.6",
         "endpoint": "https://api.x.ai/v1/chat/completions",
         "enabled": true
       },

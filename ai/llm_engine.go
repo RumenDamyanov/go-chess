@@ -145,13 +145,13 @@ func NewLLMAIEngine(cfg LLMConfig) (*LLMAIEngine, error) {
 	if cfg.Model == "" {
 		switch cfg.Provider {
 		case ProviderOpenAI:
-			cfg.Model = "gpt-3.5-turbo"
+			cfg.Model = "gpt-5.4-mini"
 		case ProviderAnthropic:
-			cfg.Model = "claude-3-haiku-20240307"
+			cfg.Model = "claude-sonnet-5"
 		case ProviderGemini:
-			cfg.Model = "gemini-1.5-flash"
+			cfg.Model = "gemini-3.8-flash"
 		case ProviderXAI:
-			cfg.Model = "grok-beta"
+			cfg.Model = "grok-4.6"
 		case ProviderDeepSeek:
 			cfg.Model = "deepseek-chat"
 		}

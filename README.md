@@ -193,8 +193,8 @@ go-chess/
 
 ## 🛠️ Technical Stack
 
-- **Language**: Go 1.23+ (latest features and performance improvements)
-- **LLM Integration**: [go-chatbot](https://github.com/RumenDamyanov/go-chatbot) v1.0.2 with multi-provider support
+- **Language**: Go 1.26.10+ or 1.27.3+
+- **LLM Integration**: [go-chatbot](https://github.com/RumenDamyanov/go-chatbot) with multi-provider support
 - **Containerization**: Docker with multi-stage builds and security hardening
 - **Orchestration**: Docker Compose with health checks and auto-restart
 - **Web Framework**: Gin (HTTP API)
@@ -210,6 +210,8 @@ go-chess/
 ```bash
 go get go.rumenx.com/chess
 ```
+
+Build the program that imports this module with **Go 1.26.10+** or **1.27.3+**. Older release lines are end of life and do not receive the October 2026 toolchain fixes. See [SECURITY.md](SECURITY.md).
 
 ## 🐳 Docker Support
 

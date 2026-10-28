@@ -931,7 +931,7 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 
 // health returns the health status of the API.
 // APIVersion is returned by the health endpoint and bumped per release.
-const APIVersion = "1.0.5"
+const APIVersion = "1.1.0"
 
 func (s *Server) health(c *gin.Context) {
 	s.gamesMux.RLock()

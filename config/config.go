@@ -97,25 +97,25 @@ func Default() *Config {
 			Providers: map[string]LLMProviderConfig{
 				"openai": {
 					APIKey:      getEnvString("OPENAI_API_KEY", ""),
-					Model:       getEnvString("OPENAI_MODEL", "gpt-3.5-turbo"),
+					Model:       getEnvString("OPENAI_MODEL", "gpt-5.4-mini"),
 					Endpoint:    getEnvString("OPENAI_ENDPOINT", "https://api.openai.com/v1/chat/completions"),
 					Personality: getEnvString("OPENAI_PERSONALITY", "a friendly but competitive chess master"),
 				},
 				"anthropic": {
 					APIKey:      getEnvString("ANTHROPIC_API_KEY", ""),
-					Model:       getEnvString("ANTHROPIC_MODEL", "claude-3-haiku-20240307"),
+					Model:       getEnvString("ANTHROPIC_MODEL", "claude-sonnet-5"),
 					Endpoint:    getEnvString("ANTHROPIC_ENDPOINT", "https://api.anthropic.com/v1/messages"),
 					Personality: getEnvString("ANTHROPIC_PERSONALITY", "a thoughtful and analytical chess strategist"),
 				},
 				"gemini": {
 					APIKey:      getEnvString("GEMINI_API_KEY", ""),
-					Model:       getEnvString("GEMINI_MODEL", "gemini-1.5-flash"),
+					Model:       getEnvString("GEMINI_MODEL", "gemini-3.8-flash"),
 					Endpoint:    getEnvString("GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta/models"),
 					Personality: getEnvString("GEMINI_PERSONALITY", "a creative and intuitive chess player"),
 				},
 				"xai": {
 					APIKey:      getEnvString("XAI_API_KEY", ""),
-					Model:       getEnvString("XAI_MODEL", "grok-beta"),
+					Model:       getEnvString("XAI_MODEL", "grok-4.6"),
 					Endpoint:    getEnvString("XAI_ENDPOINT", "https://api.x.ai/v1/chat/completions"),
 					Personality: getEnvString("XAI_PERSONALITY", "a witty and clever chess opponent"),
 				},
