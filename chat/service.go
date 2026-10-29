@@ -96,19 +96,19 @@ func NewChatService(logger *zap.Logger) (*ChatService, error) {
 		Model: "openai", // Default to OpenAI, can be overridden by env
 		OpenAI: config.OpenAIConfig{
 			APIKey: os.Getenv("OPENAI_API_KEY"),
-			Model:  "gpt-4o-mini", // More cost-effective for chat
+			Model:  "gpt-5.4-mini",
 		},
 		Anthropic: config.AnthropicConfig{
 			APIKey: os.Getenv("ANTHROPIC_API_KEY"),
-			Model:  "claude-3-haiku-20240307",
+			Model:  "claude-sonnet-5",
 		},
 		Gemini: config.GeminiConfig{
 			APIKey: os.Getenv("GEMINI_API_KEY"),
-			Model:  "gemini-1.5-flash",
+			Model:  "gemini-3.8-flash",
 		},
 		XAI: config.XAIConfig{
 			APIKey: os.Getenv("XAI_API_KEY"),
-			Model:  "grok-1.5",
+			Model:  "grok-4.6",
 		},
 		// Chess-specific prompt configuration
 		Prompt: `You are a friendly AI chess opponent and coach. You are enthusiastic about chess and enjoy discussing games, moves, and strategies. Your personality traits:
@@ -217,22 +217,22 @@ func (cs *ChatService) createCustomChatbot(provider, apiKey string) (ChatbotClie
 	case "openai":
 		cfg.OpenAI = config.OpenAIConfig{
 			APIKey: apiKey,
-			Model:  "gpt-4o-mini",
+			Model:  "gpt-5.4-mini",
 		}
 	case "anthropic":
 		cfg.Anthropic = config.AnthropicConfig{
 			APIKey: apiKey,
-			Model:  "claude-3-haiku-20240307",
+			Model:  "claude-sonnet-5",
 		}
 	case "gemini":
 		cfg.Gemini = config.GeminiConfig{
 			APIKey: apiKey,
-			Model:  "gemini-1.5-flash",
+			Model:  "gemini-3.8-flash",
 		}
 	case "xai":
 		cfg.XAI = config.XAIConfig{
 			APIKey: apiKey,
-			Model:  "grok-1.5",
+			Model:  "grok-4.6",
 		}
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)

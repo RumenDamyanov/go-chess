@@ -10,7 +10,7 @@ This project adheres to a Code of Conduct to ensure a welcoming environment for 
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.26.10 or later (1.27.3+ is also supported). Go 1.25 and older are end of life.
 - Git
 - A GitHub account
 
